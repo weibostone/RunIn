@@ -102,7 +102,7 @@ std::vector<std::wstring> GetAllDrives() {
 
 void LoadConfig() {
     g_tools.clear();
-    fs::path configPath = g_exeDir / "config.txt";
+    fs::path configPath = g_exeDir / "config.ini";
     if (!fs::exists(configPath)) return;
 
     std::ifstream ifs(configPath);
@@ -140,7 +140,7 @@ void LoadConfig() {
 }
 
 void SaveConfig() {
-    fs::path configPath = g_exeDir / "config.txt";
+    fs::path configPath = g_exeDir / "config.ini";
     std::ofstream ofs(configPath);
     if (!ofs.is_open()) return;
     
@@ -847,7 +847,7 @@ LRESULT CALLBACK ConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
                 case IDC_BTN_SAVE:
                     if (toolIdx != -1) UpdateItemFromEdits(toolIdx);
                     SaveConfig();
-                    MessageBoxW(hWnd, L"Config saved successfully to config.txt!", L"Save Success", MB_OK | MB_ICONINFORMATION);
+                    MessageBoxW(hWnd, L"Config saved successfully to config.ini!", L"Save Success", MB_OK | MB_ICONINFORMATION);
                     break;
             }
             break;
