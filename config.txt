@@ -1,0 +1,14 @@
+# RunIt Config File
+# Format:
+[Item1]
+Name=...
+Path=...
+Args=...
+Hotkey=...
+
+[Item1]
+Name=Git Bash
+Path=D:\tools\Git\git-bash.exe
+Args=
+Hotkey=a
+

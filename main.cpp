@@ -1,0 +1,910 @@
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+// =================================================
+
+#pragma comment(linker, "\"/manifestdependency:type='win32' \
+name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+
+#include <windows.h>
+#include <shlwapi.h>
+#include <commctrl.h>
+#include <filesystem>
+#include <string>
+#include <vector>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+
+#pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "comctl32.lib")
+
+namespace fs = std::filesystem;
+
+// ================== Data Structures ==================
+
+struct ToolItem {
+    std::wstring name;
+    std::wstring path;
+    std::wstring args;
+    std::wstring hotkey;
+};
+
+std::vector<ToolItem> g_tools;
+fs::path g_exeDir;
+
+HFONT hGlobalFont = NULL;
+HFONT hBoldFont = NULL;
+HBRUSH hBkgBrush = NULL;
+
+std::vector<int> g_listBoxMap;
+
+// Forward declarations
+HWND CreateCtrl(LPCWSTR cls, LPCWSTR text, DWORD style, DWORD exStyle, int x, int y, int w, int h, HMENU id, HWND parent, HFONT font);
+void RunConfigGUI(HINSTANCE hInstance);
+
+// ================== Helper Functions ==================
+
+std::wstring StringToWString(const std::string& str) {
+    if (str.empty()) return std::wstring();
+    int size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), NULL, 0);
+    std::wstring wstr(size, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), &wstr[0], size);
+    return wstr;
+}
+
+std::string WStringToString(const std::wstring& wstr) {
+    if (wstr.empty()) return std::string();
+    int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.size(), NULL, 0, NULL, NULL);
+    std::string str(size, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.size(), &str[0], size, NULL, NULL);
+    return str;
+}
+
+fs::path GetExeDir() {
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(NULL, exePath, MAX_PATH);
+    return fs::path(exePath).parent_path();
+}
+
+bool FileExistsW(const std::wstring& path) {
+    if (path.empty()) return false;
+    DWORD attr = GetFileAttributesW(path.c_str());
+    return (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+bool DirExistsW(const std::wstring& path) {
+    if (path.empty()) return false;
+    DWORD attr = GetFileAttributesW(path.c_str());
+    return (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+std::wstring FindExecutablePath(const std::wstring& exeName) {
+    wchar_t pathBuffer[MAX_PATH] = { 0 };
+    wcscpy_s(pathBuffer, MAX_PATH, exeName.c_str());
+    if (PathFindOnPathW(pathBuffer, NULL)) return pathBuffer;
+    return L"";
+}
+
+std::vector<std::wstring> GetAllDrives() {
+    std::vector<std::wstring> drives;
+    DWORD mask = GetLogicalDrives();
+    for (char i = 0; i < 26; ++i) {
+        if (mask & (1 << i)) {
+            std::wstring d = std::wstring(1, L'A' + i) + L":";
+            drives.push_back(d);
+        }
+    }
+    return drives;
+}
+
+// ================== Config File R/W ==================
+
+void LoadConfig() {
+    g_tools.clear();
+    fs::path configPath = g_exeDir / "config.txt";
+    if (!fs::exists(configPath)) return;
+
+    std::ifstream ifs(configPath);
+    std::string line;
+    ToolItem currentTool;
+    bool inItem = false;
+
+    while (std::getline(ifs, line)) {
+        line.erase(0, line.find_first_not_of(" \t\r\n"));
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+        if (line.empty() || line[0] == '#') continue;
+
+        if (!line.empty() && line.front() == '[' && line.back() == ']') {
+            std::string section = line.substr(1, line.size() - 2);
+            if (section.rfind("Item", 0) == 0) {
+                if (inItem) g_tools.push_back(currentTool);
+                currentTool = ToolItem();
+                inItem = true;
+            } else {
+                if (inItem) { g_tools.push_back(currentTool); inItem = false; }
+            }
+        } else if (inItem) {
+            auto eqPos = line.find('=');
+            if (eqPos != std::string::npos) {
+                std::string key = line.substr(0, eqPos);
+                std::string val = line.substr(eqPos + 1);
+                if (key == "Name") currentTool.name = StringToWString(val);
+                else if (key == "Path") currentTool.path = StringToWString(val);
+                else if (key == "Args") currentTool.args = StringToWString(val);
+                else if (key == "Hotkey") currentTool.hotkey = StringToWString(val);
+            }
+        }
+    }
+    if (inItem) g_tools.push_back(currentTool);
+}
+
+void SaveConfig() {
+    fs::path configPath = g_exeDir / "config.txt";
+    std::ofstream ofs(configPath);
+    if (!ofs.is_open()) return;
+    
+    ofs << "# RunIt Config File\n";
+    ofs << "# Format: [ItemX]\nName=...\nPath=...\nArgs=...\nHotkey=...\n\n";
+    
+    for (size_t i = 0; i < g_tools.size(); i++) {
+        ofs << "[Item" << (i + 1) << "]\n";
+        ofs << "Name=" << WStringToString(g_tools[i].name) << "\n";
+        ofs << "Path=" << WStringToString(g_tools[i].path) << "\n";
+        ofs << "Args=" << WStringToString(g_tools[i].args) << "\n";
+        ofs << "Hotkey=" << WStringToString(g_tools[i].hotkey) << "\n\n";
+    }
+}
+
+// ================== System Functions & Terminal Search ==================
+
+bool InjectToSystemPath() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ | KEY_WRITE, &hKey) != ERROR_SUCCESS) return false;
+
+    wchar_t pathVal[32767];
+    DWORD bufSize = sizeof(pathVal);
+    RegQueryValueExW(hKey, L"Path", NULL, NULL, (LPBYTE)pathVal, &bufSize);
+
+    std::wstring currentPath = pathVal;
+    std::wstring exeDirStr = g_exeDir.wstring();
+
+    if (currentPath.find(exeDirStr) != std::wstring::npos) {
+        RegCloseKey(hKey); return true;
+    }
+
+    std::wstring newPath = currentPath;
+    if (!newPath.empty() && newPath.back() != L';') newPath += L";";
+    newPath += exeDirStr;
+
+    RegSetValueExW(hKey, L"Path", 0, REG_EXPAND_SZ, (LPBYTE)newPath.c_str(), (newPath.size() + 1) * sizeof(wchar_t));
+    RegCloseKey(hKey);
+
+    DWORD_PTR result;
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"Environment", SMTO_ABORTIFHUNG, 5000, &result);
+    return true;
+}
+
+bool ToolExists(const std::wstring& name) {
+    for (const auto& t : g_tools) if (t.name == name) return true;
+    return false;
+}
+
+void AddTool(const std::wstring& name, const std::wstring& path, const std::wstring& args, const std::wstring& hotkey = L"") {
+    if (ToolExists(name)) return;
+    g_tools.push_back({name, path, args, hotkey});
+}
+
+std::wstring FindCondaBasePath() {
+    std::wstring condaExe = FindExecutablePath(L"conda.exe");
+    if (!condaExe.empty()) {
+        fs::path p(condaExe);
+        if (p.parent_path().filename() == L"Scripts") return p.parent_path().parent_path().wstring();
+        return p.parent_path().wstring();
+    }
+
+    std::vector<std::wstring> drives = GetAllDrives();
+    std::vector<std::wstring> dirs = {L"\\ProgramData\\Anaconda3", L"\\ProgramData\\miniconda3"};
+    wchar_t* profile = _wgetenv(L"USERPROFILE");
+    if (profile) {
+        dirs.push_back(std::wstring(profile) + L"\\anaconda3");
+        dirs.push_back(std::wstring(profile) + L"\\miniconda3");
+        dirs.push_back(std::wstring(profile) + L"\\AppData\\Local\\anaconda3");
+        dirs.push_back(std::wstring(profile) + L"\\AppData\\Local\\miniconda3");
+    }
+
+    for (const auto& d : drives) {
+        for (const auto& dir : dirs) {
+            std::wstring path = d + dir;
+            if (DirExistsW(path)) return path;
+        }
+    }
+    return L"";
+}
+
+std::wstring FindVsBatch(const std::wstring& batName) {
+    std::vector<std::wstring> drives = GetAllDrives();
+    std::vector<std::wstring> progs = {L"\\Program Files\\Microsoft Visual Studio", L"\\Program Files (x86)\\Microsoft Visual Studio"};
+    std::vector<std::wstring> years = {L"2022", L"2019", L"2017"};
+    std::vector<std::wstring> editions = {L"Community", L"Professional", L"Enterprise", L"BuildTools"};
+
+    for (const auto& d : drives) {
+        for (const auto& prog : progs) {
+            std::wstring basePath = d + prog;
+            if (!DirExistsW(basePath)) continue;
+            for (const auto& year : years) {
+                std::wstring yearPath = basePath + L"\\" + year;
+                if (!DirExistsW(yearPath)) continue;
+                for (const auto& ed : editions) {
+                    std::wstring batPath = yearPath + L"\\" + ed + L"\\VC\\Auxiliary\\Build\\" + batName;
+                    if (FileExistsW(batPath)) return batPath;
+                }
+            }
+        }
+    }
+    return L"";
+}
+
+std::wstring FindMSYS2Path() {
+    std::vector<std::wstring> drives = GetAllDrives();
+    std::vector<std::wstring> dirs = {L"\\msys64", L"\\msys32"};
+    for (const auto& d : drives) {
+        for (const auto& dir : dirs) {
+            std::wstring path = d + dir;
+            if (DirExistsW(path)) {
+                if (FileExistsW(path + L"\\msys2_shell.cmd")) return path;
+            }
+        }
+    }
+    return L"";
+}
+
+std::wstring FindCmderPath() {
+    std::vector<std::wstring> drives = GetAllDrives();
+    std::vector<std::wstring> dirs = {L"\\cmder", L"\\Program Files\\cmder", L"\\Program Files (x86)\\cmder"};
+    for (const auto& d : drives) {
+        for (const auto& dir : dirs) {
+            std::wstring path = d + dir;
+            if (DirExistsW(path)) {
+                std::wstring exe = path + L"\\Cmder.exe";
+                if (FileExistsW(exe)) return exe;
+            }
+        }
+    }
+    return L"";
+}
+
+std::wstring FindConEmuPath() {
+    std::vector<std::wstring> drives = GetAllDrives();
+    std::vector<std::wstring> dirs = {L"\\Program Files\\ConEmu", L"\\Program Files (x86)\\ConEmu"};
+    for (const auto& d : drives) {
+        for (const auto& dir : dirs) {
+            std::wstring path = d + dir;
+            if (DirExistsW(path)) {
+                std::wstring exe = path + L"\\ConEmu64.exe";
+                if (FileExistsW(exe)) return exe;
+                exe = path + L"\\ConEmu.exe";
+                if (FileExistsW(exe)) return exe;
+            }
+        }
+    }
+    return L"";
+}
+
+std::wstring FindWarpPath() {
+    std::vector<std::wstring> drives = GetAllDrives();
+    std::vector<std::wstring> dirs = {L"\\Program Files\\Warp", L"\\Program Files (x86)\\Warp"};
+    for (const auto& d : drives) {
+        for (const auto& dir : dirs) {
+            std::wstring path = d + dir;
+            if (DirExistsW(path)) {
+                std::wstring exe = path + L"\\Warp.exe";
+                if (FileExistsW(exe)) return exe;
+            }
+        }
+    }
+    return FindExecutablePath(L"Warp.exe");
+}
+
+std::wstring FindWSLPath() {
+    std::wstring p = FindExecutablePath(L"wsl.exe");
+    if (!p.empty()) return p;
+    wchar_t sysDir[MAX_PATH];
+    if (GetSystemDirectoryW(sysDir, MAX_PATH)) {
+        std::wstring p2 = std::wstring(sysDir) + L"\\wsl.exe";
+        if (FileExistsW(p2)) return p2;
+    }
+    return L"";
+}
+
+#define IDC_CHK_GIT_BASH       2001
+#define IDC_CHK_GIT_CMD        2002
+#define IDC_CHK_PS             2003
+#define IDC_CHK_PS7            2004
+#define IDC_CHK_WT             2005
+#define IDC_CHK_CMD            2006
+#define IDC_CHK_CONDA_PS       2007
+#define IDC_CHK_CONDA_CMD      2008
+#define IDC_CHK_VS_X64         2009
+#define IDC_CHK_VS_X86         2010
+#define IDC_CHK_MSYS2_MINGW64 2011
+#define IDC_CHK_MSYS2_MINGW32 2012
+#define IDC_CHK_MSYS2_MSYS     2013
+#define IDC_CHK_MSYS2_CLANG64 2014
+#define IDC_CHK_MSYS2_UCRT64  2015
+#define IDC_CHK_CMDER          2016
+#define IDC_CHK_CONEMU         2017
+#define IDC_CHK_ZELLIJ         2018
+#define IDC_CHK_TMUX           2019
+#define IDC_CHK_WARP           2020
+#define IDC_CHK_WSL_PS7        2021
+#define IDC_CHK_WSL_CMD        2022
+#define IDC_CHK_ZELLIJ_WIN     2023
+#define IDC_CHK_CODEX_PS       2024
+#define IDC_CHK_CLAUDE_PS      2025
+#define IDC_CHK_CODEX_WSL      2026
+#define IDC_CHK_CLAUDE_WSL     2027
+#define IDC_BTN_DO_SEARCH      2030
+
+void ExecuteSearch(HWND hParent, std::vector<int> targets) {
+    std::wstring sysDir = L"";
+    wchar_t sysDirBuf[MAX_PATH];
+    if (GetSystemDirectoryW(sysDirBuf, MAX_PATH)) sysDir = sysDirBuf;
+    std::wstring sysCmd = sysDir + L"\\cmd.exe";
+    std::wstring sysPs = sysDir + L"\\WindowsPowerShell\\v1.0\\powershell.exe";
+
+    std::wstring ps7Path = FindExecutablePath(L"pwsh.exe");
+    if (ps7Path.empty()) { ps7Path = L"C:\\Program Files\\PowerShell\\7\\pwsh.exe"; if (!FileExistsW(ps7Path)) ps7Path = L"C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe"; if (!FileExistsW(ps7Path)) ps7Path = L""; }
+
+    for (int id : targets) {
+        std::wstring name = L"", path = L"", args = L"";
+        
+        switch (id) {
+            case IDC_CHK_GIT_BASH:
+                name = L"Git Bash";
+                path = FindExecutablePath(L"git-bash.exe");
+                if (path.empty()) { path = L"C:\\Program Files\\Git\\git-bash.exe"; if (!FileExistsW(path)) path = L"C:\\Program Files (x86)\\Git\\git-bash.exe"; if (!FileExistsW(path)) path = L""; }
+                break;
+            case IDC_CHK_GIT_CMD:
+                name = L"Git CMD";
+                {
+                    std::wstring gitExe = FindExecutablePath(L"git.exe");
+                    if (gitExe.empty()) { gitExe = L"C:\\Program Files\\Git\\cmd\\git.exe"; if (!FileExistsW(gitExe)) gitExe = L"C:\\Program Files (x86)\\Git\\cmd\\git.exe"; if (!FileExistsW(gitExe)) gitExe = L""; }
+                    if (!gitExe.empty()) { path = sysCmd; args = L"/K \"" + fs::path(gitExe).parent_path().parent_path().wstring() + L"\\cmd\\git.cmd\" & cd /D \"{current_dir}\""; }
+                }
+                break;
+            case IDC_CHK_PS:
+                name = L"PowerShell";
+                path = FindExecutablePath(L"powershell.exe");
+                if (path.empty() && !sysDir.empty()) path = sysPs;
+                if (!path.empty()) args = L"-NoExit -Command Set-Location '{current_dir}'";
+                break;
+            case IDC_CHK_PS7:
+                name = L"PowerShell 7";
+                path = ps7Path;
+                if (!path.empty()) args = L"-NoExit -Command Set-Location '{current_dir}'";
+                break;
+            case IDC_CHK_WT:
+                name = L"Windows Terminal";
+                path = FindExecutablePath(L"wt.exe");
+                if (path.empty()) { wchar_t* lad = _wgetenv(L"LOCALAPPDATA"); if (lad) path = std::wstring(lad) + L"\\Microsoft\\WindowsApps\\wt.exe"; if (!FileExistsW(path)) path = L""; }
+                if (!path.empty()) args = L"-d \"{current_dir}\"";
+                break;
+            case IDC_CHK_CMD:
+                name = L"CMD";
+                path = sysCmd;
+                args = L"/K cd /D \"{current_dir}\"";
+                break;
+            case IDC_CHK_CONDA_PS:
+                name = L"Anaconda PowerShell";
+                { std::wstring cb = FindCondaBasePath(); if (!cb.empty()) { path = sysPs; args = L"-NoExit -Command & '" + cb + L"\\shell\\condabin\\conda-hook.ps1'; conda activate '" + cb + L"'; Set-Location '{current_dir}'"; } }
+                break;
+            case IDC_CHK_CONDA_CMD:
+                name = L"Anaconda Prompt";
+                { std::wstring cb = FindCondaBasePath(); if (!cb.empty()) { path = sysCmd; args = L"/K \"" + cb + L"\\Scripts\\activate.bat\" \"" + cb + L"\" & cd /D \"{current_dir}\""; } }
+                break;
+            case IDC_CHK_VS_X64:
+                name = L"VS x64 Native";
+                { std::wstring bp = FindVsBatch(L"vcvars64.bat"); if (!bp.empty()) { path = sysCmd; args = L"/K \"" + bp + L"\" & cd /D \"{current_dir}\""; } }
+                break;
+            case IDC_CHK_VS_X86:
+                name = L"VS x64_x86 Cross";
+                { std::wstring bp = FindVsBatch(L"vcvarsamd64_x86.bat"); if (!bp.empty()) { path = sysCmd; args = L"/K \"" + bp + L"\" & cd /D \"{current_dir}\""; } }
+                break;
+            case IDC_CHK_MSYS2_MINGW64:
+                name = L"MSYS2 MinGW x64"; args = L"-mingw64 -here";
+                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
+                break;
+            case IDC_CHK_MSYS2_MINGW32:
+                name = L"MSYS2 MinGW x86"; args = L"-mingw32 -here";
+                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
+                break;
+            case IDC_CHK_MSYS2_MSYS:
+                name = L"MSYS2 MSYS"; args = L"-msys -here";
+                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
+                break;
+            case IDC_CHK_MSYS2_CLANG64:
+                name = L"MSYS2 Clang x64"; args = L"-clang64 -here";
+                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
+                break;
+            case IDC_CHK_MSYS2_UCRT64:
+                name = L"MSYS2 UCRT x64"; args = L"-ucrt64 -here";
+                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
+                break;
+            case IDC_CHK_CMDER:
+                name = L"Cmder"; path = FindCmderPath(); break;
+            case IDC_CHK_CONEMU:
+                name = L"ConEmu"; path = FindConEmuPath(); break;
+            case IDC_CHK_ZELLIJ:
+                name = L"Zellij (WSL)"; 
+                path = ps7Path;
+                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}' zellij\"";
+                break;
+            case IDC_CHK_TMUX:
+                name = L"Tmux (WSL)"; 
+                path = ps7Path;
+                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}' tmux\"";
+                break;
+            case IDC_CHK_WARP:
+                name = L"Warp"; path = FindWarpPath(); break;
+            case IDC_CHK_WSL_PS7:
+                name = L"WSL (PowerShell 7)"; 
+                path = ps7Path;
+                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}'\"";
+                break;
+            case IDC_CHK_WSL_CMD:
+                name = L"WSL (CMD)"; 
+                path = sysCmd;
+                args = L"/K wsl --cd \"{current_dir}\"";
+                break;
+            case IDC_CHK_ZELLIJ_WIN:
+                name = L"Zellij"; 
+                path = FindExecutablePath(L"zellij.exe");
+                break;
+            case IDC_CHK_CODEX_PS:
+                name = L"Codex (PowerShell)"; 
+                path = ps7Path;
+                if (!path.empty()) args = L"-NoExit -Command \"cd '{current_dir}'; codex\"";
+                break;
+            case IDC_CHK_CLAUDE_PS:
+                name = L"Claude Code (PowerShell)"; 
+                path = ps7Path;
+                if (!path.empty()) args = L"-NoExit -Command \"cd '{current_dir}'; claude\"";
+                break;
+            case IDC_CHK_CODEX_WSL:
+                name = L"Codex (WSL)"; 
+                path = ps7Path;
+                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}' codex\"";
+                break;
+            case IDC_CHK_CLAUDE_WSL:
+                name = L"Claude Code (WSL)"; 
+                path = ps7Path;
+                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}' claude\"";
+                break;
+        }
+        AddTool(name, path, args);
+    }
+}
+
+bool g_bSearchExecuted = false;
+
+LRESULT CALLBACK SearchDlgProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+        case WM_CREATE: {
+            CreateCtrl(L"STATIC", L"Please check the terminals to search automatically:", 0, 0, 20, 15, 400, 20, NULL, hWnd, hGlobalFont);
+            int y = 45;
+            int id = IDC_CHK_GIT_BASH;
+            auto AddChk = [&](LPCWSTR text) {
+                CreateCtrl(L"BUTTON", text, BS_AUTOCHECKBOX, 0, 20, y, 400, 24, (HMENU)(INT_PTR)id, hWnd, hGlobalFont);
+                y += 28;
+                id++;
+            };
+            AddChk(L"Git Bash"); AddChk(L"Git CMD"); AddChk(L"PowerShell"); AddChk(L"PowerShell 7");
+            AddChk(L"Windows Terminal"); AddChk(L"CMD");
+            AddChk(L"Anaconda PowerShell Prompt"); AddChk(L"Anaconda Prompt");
+            AddChk(L"VS x64 Native Tools Cmd"); AddChk(L"VS x64_x86 Cross Tools Cmd");
+            AddChk(L"MSYS2 MinGW x64"); AddChk(L"MSYS2 MinGW x86"); AddChk(L"MSYS2 MSYS");
+            AddChk(L"MSYS2 MinGW Clang x64"); AddChk(L"MSYS2 MinGW UCRT x64");
+            AddChk(L"Cmder"); AddChk(L"ConEmu");
+            AddChk(L"Zellij (WSL)"); AddChk(L"Tmux (WSL)"); AddChk(L"Warp");
+            AddChk(L"WSL (PowerShell 7)"); AddChk(L"WSL (CMD)");
+            AddChk(L"Zellij (Windows Native)");
+            AddChk(L"Codex (PowerShell)"); AddChk(L"Claude Code (PowerShell)");
+            AddChk(L"Codex (WSL)"); AddChk(L"Claude Code (WSL)");
+            
+            CreateCtrl(L"BUTTON", L"Start Search", 0, 0, 20, y + 10, 400, 35, (HMENU)(INT_PTR)IDC_BTN_DO_SEARCH, hWnd, hBoldFont);
+            break;
+        }
+        case WM_COMMAND: {
+            if (LOWORD(wParam) == IDC_BTN_DO_SEARCH) {
+                std::vector<int> targets;
+                for (int i = IDC_CHK_GIT_BASH; i <= IDC_CHK_CLAUDE_WSL; i++) {
+                    HWND hChk = GetDlgItem(hWnd, i);
+                    if (IsWindowVisible(hChk) && SendMessageW(hChk, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+                        targets.push_back(i);
+                    }
+                }
+                ExecuteSearch(hWnd, targets);
+                g_bSearchExecuted = true;
+                DestroyWindow(hWnd);
+                return 0;
+            }
+            break;
+        }
+        case WM_CLOSE: {
+            DestroyWindow(hWnd);
+            return 0;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORDLG: {
+            HDC hdc = (HDC)wParam;
+            SetTextColor(hdc, RGB(30, 30, 30));
+            SetBkMode(hdc, TRANSPARENT);
+            return (LRESULT)hBkgBrush;
+        }
+    }
+    return DefWindowProc(hWnd, message, wParam, lParam);
+}
+
+HWND CreateCtrl(LPCWSTR cls, LPCWSTR text, DWORD style, DWORD exStyle, int x, int y, int w, int h, HMENU id, HWND parent, HFONT font) {
+    HWND hCtrl = CreateWindowExW(exStyle, cls, text, style | WS_CHILD | WS_VISIBLE, x, y, w, h, parent, id, NULL, NULL);
+    SendMessageW(hCtrl, WM_SETFONT, (WPARAM)font, TRUE);
+    return hCtrl;
+}
+
+// ================== Menu Popup & Direct Invoke Mode ==================
+
+#define ID_MENU_SETTING 9999
+
+void LaunchToolByIndex(int index, HINSTANCE hInstance) {
+    if (index == ID_MENU_SETTING) {
+        RunConfigGUI(hInstance);
+    } else if (index > 0 && index <= (int)g_tools.size()) {
+        int toolIdx = index - 1;
+        if (!g_tools[toolIdx].path.empty()) { 
+            const auto& tool = g_tools[toolIdx];
+            fs::path currentDir = fs::current_path();
+            std::wstring dirStr = currentDir.wstring();
+
+            std::wstring args = tool.args;
+            size_t pos = args.find(L"{current_dir}");
+            if (pos != std::wstring::npos) args.replace(pos, 13, dirStr);
+
+            std::wstring cmdLine = L"\"" + tool.path + L"\"" + (args.empty() ? L"" : L" " + args);
+        STARTUPINFOW sf = { sizeof(sf) };
+            PROCESS_INFORMATION pi;
+        CreateProcessW(NULL, &cmdLine[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, dirStr.c_str(), &sf, &pi);
+            if (pi.hProcess) CloseHandle(pi.hProcess);
+            if (pi.hThread) CloseHandle(pi.hThread);
+        }
+    }
+}
+
+void RunMenuMode(HINSTANCE hInstance) {
+    LoadConfig();
+
+    HMENU hMenu = CreatePopupMenu();
+    int menuCount = 0;
+    for (size_t i = 0; i < g_tools.size(); i++) {
+        if (!g_tools[i].path.empty()) { 
+            menuCount++;
+            std::wstring menuText = std::to_wstring(menuCount) + L". " + g_tools[i].name;
+            if (!g_tools[i].hotkey.empty()) menuText += L"(&" + g_tools[i].hotkey + L")";
+            AppendMenuW(hMenu, MF_STRING, (UINT_PTR)(i + 1), menuText.c_str()); 
+        }
+    }
+
+    if (menuCount > 0) {
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+    }
+    std::wstring settingText = std::to_wstring(menuCount + 1) + L". &Setting";
+    AppendMenuW(hMenu, MF_STRING, ID_MENU_SETTING, settingText.c_str()); 
+
+    POINT pt;
+    GetCursorPos(&pt);
+    
+    HWND hWnd = CreateWindowExW(0, L"Static", L"", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+    SetForegroundWindow(hWnd); 
+    int cmdId = TrackPopupMenu(hMenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt.x, pt.y, 0, hWnd, NULL);
+    DestroyWindow(hWnd);
+
+    if (cmdId > 0) LaunchToolByIndex(cmdId, hInstance);
+    DestroyMenu(hMenu);
+}
+
+// ================== Modern GUI Config Interface ==================
+
+#define IDC_LIST_ITEMS 101
+#define IDC_EDIT_NAME 102
+#define IDC_EDIT_PATH 103
+#define IDC_EDIT_ARGS 104
+#define IDC_EDIT_HOTKEY 105
+#define IDC_BTN_ADD 106
+#define IDC_BTN_DEL 107
+#define IDC_BTN_SEARCH 108
+#define IDC_BTN_INJECT 109
+#define IDC_BTN_SAVE 110
+#define IDC_BTN_UP 111
+#define IDC_BTN_DOWN 112
+
+HWND hList, hEditName, hEditPath, hEditArgs, hEditHotkey;
+
+void RefreshListBox() {
+    int selListBoxIdx = (int)SendMessageW(hList, LB_GETCURSEL, 0, 0);
+    int savedToolIdx = -1;
+    if (selListBoxIdx != LB_ERR && selListBoxIdx < (int)g_listBoxMap.size()) {
+        savedToolIdx = g_listBoxMap[selListBoxIdx];
+    }
+
+    SendMessageW(hList, LB_RESETCONTENT, 0, 0);
+    g_listBoxMap.clear();
+
+    int number = 1;
+    for (size_t i = 0; i < g_tools.size(); i++) {
+        if (!g_tools[i].path.empty()) {
+            std::wstring itemText = std::to_wstring(number) + L". " + g_tools[i].name;
+            SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM)itemText.c_str());
+            g_listBoxMap.push_back((int)i);
+            number++;
+        }
+    }
+
+    bool hasPending = false;
+    for (size_t i = 0; i < g_tools.size(); i++) {
+        if (g_tools[i].path.empty()) { hasPending = true; break; }
+    }
+
+    if (hasPending) {
+        SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM)L"---------- Pending (Requires Manual Path) ----------");
+        g_listBoxMap.push_back(-1);
+
+        for (size_t i = 0; i < g_tools.size(); i++) {
+            if (g_tools[i].path.empty()) {
+                std::wstring itemText = L"   " + g_tools[i].name;
+                SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM)itemText.c_str());
+                g_listBoxMap.push_back((int)i);
+            }
+        }
+    }
+
+    if (savedToolIdx != -1) {
+        for (size_t i = 0; i < g_listBoxMap.size(); i++) {
+            if (g_listBoxMap[i] == savedToolIdx) {
+                SendMessageW(hList, LB_SETCURSEL, i, 0);
+                break;
+            }
+        }
+    }
+}
+
+void LoadItemToEdits(int toolIndex) {
+    if (toolIndex < 0 || toolIndex >= (int)g_tools.size()) return;
+    SetWindowTextW(hEditName, g_tools[toolIndex].name.c_str());
+    SetWindowTextW(hEditPath, g_tools[toolIndex].path.c_str());
+    SetWindowTextW(hEditArgs, g_tools[toolIndex].args.c_str());
+    SetWindowTextW(hEditHotkey, g_tools[toolIndex].hotkey.c_str());
+}
+
+void UpdateItemFromEdits(int toolIndex) {
+    if (toolIndex < 0 || toolIndex >= (int)g_tools.size()) return;
+    wchar_t buf[2048];
+    GetWindowTextW(hEditName, buf, 2048); g_tools[toolIndex].name = buf;
+    GetWindowTextW(hEditPath, buf, 2048); g_tools[toolIndex].path = buf;
+    GetWindowTextW(hEditArgs, buf, 2048); g_tools[toolIndex].args = buf;
+    GetWindowTextW(hEditHotkey, buf, 2048); g_tools[toolIndex].hotkey = buf;
+}
+
+LRESULT CALLBACK ConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+        case WM_CREATE: {
+            hGlobalFont = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+            hBoldFont = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+            hBkgBrush = CreateSolidBrush(RGB(245, 245, 245));
+
+            CreateCtrl(L"STATIC", L"RunIt Config Panel", 0, 0, 20, 15, 300, 30, NULL, hWnd, hBoldFont);
+            
+            CreateCtrl(L"STATIC", L"Menu Item List (Support sorting):", 0, 0, 20, 55, 200, 20, NULL, hWnd, hGlobalFont);
+            hList = CreateCtrl(L"LISTBOX", L"", WS_BORDER | LBS_NOTIFY | WS_VSCROLL | LBS_HASSTRINGS, WS_EX_CLIENTEDGE, 20, 80, 340, 310, (HMENU)(INT_PTR)IDC_LIST_ITEMS, hWnd, hGlobalFont);
+            
+            CreateCtrl(L"BUTTON", L"Up", 0, 0, 20, 400, 160, 35, (HMENU)(INT_PTR)IDC_BTN_UP, hWnd, hGlobalFont);
+            CreateCtrl(L"BUTTON", L"Down", 0, 0, 200, 400, 160, 35, (HMENU)(INT_PTR)IDC_BTN_DOWN, hWnd, hGlobalFont);
+
+            CreateCtrl(L"STATIC", L"Name:", 0, 0, 380, 85, 80, 20, NULL, hWnd, hGlobalFont);
+            hEditName = CreateCtrl(L"EDIT", L"", WS_BORDER | ES_AUTOVSCROLL, WS_EX_CLIENTEDGE, 470, 80, 290, 28, (HMENU)(INT_PTR)IDC_EDIT_NAME, hWnd, hGlobalFont);
+            
+            CreateCtrl(L"STATIC", L"Full Path:", 0, 0, 380, 125, 80, 20, NULL, hWnd, hGlobalFont);
+            hEditPath = CreateCtrl(L"EDIT", L"", WS_BORDER | ES_AUTOVSCROLL, WS_EX_CLIENTEDGE, 470, 120, 290, 28, (HMENU)(INT_PTR)IDC_EDIT_PATH, hWnd, hGlobalFont);
+            
+            CreateCtrl(L"STATIC", L"Launch Args:", 0, 0, 380, 165, 80, 20, NULL, hWnd, hGlobalFont);
+            hEditArgs = CreateCtrl(L"EDIT", L"", WS_BORDER | ES_AUTOVSCROLL, WS_EX_CLIENTEDGE, 470, 160, 290, 28, (HMENU)(INT_PTR)IDC_EDIT_ARGS, hWnd, hGlobalFont);
+
+            CreateCtrl(L"STATIC", L"Hotkey:", 0, 0, 380, 205, 80, 20, NULL, hWnd, hGlobalFont);
+            hEditHotkey = CreateCtrl(L"EDIT", L"", WS_BORDER | ES_AUTOVSCROLL, WS_EX_CLIENTEDGE, 470, 200, 50, 28, (HMENU)(INT_PTR)IDC_EDIT_HOTKEY, hWnd, hGlobalFont);
+            CreateCtrl(L"STATIC", L"(Single letter/number, optional)", 0, 0, 530, 205, 200, 20, NULL, hWnd, hGlobalFont);
+
+            CreateCtrl(L"BUTTON", L"Add / Update", 0, 0, 380, 250, 180, 38, (HMENU)(INT_PTR)IDC_BTN_ADD, hWnd, hGlobalFont);
+            CreateCtrl(L"BUTTON", L"Delete Selected", 0, 0, 580, 250, 180, 38, (HMENU)(INT_PTR)IDC_BTN_DEL, hWnd, hGlobalFont);
+
+            CreateCtrl(L"BUTTON", L"Auto Search Terminals", 0, 0, 380, 310, 180, 38, (HMENU)(INT_PTR)IDC_BTN_SEARCH, hWnd, hGlobalFont);
+            CreateCtrl(L"BUTTON", L"Inject System PATH", 0, 0, 580, 310, 180, 38, (HMENU)(INT_PTR)IDC_BTN_INJECT, hWnd, hGlobalFont);
+            
+            CreateCtrl(L"BUTTON", L"Save Config & Apply", 0, 0, 380, 370, 380, 65, (HMENU)(INT_PTR)IDC_BTN_SAVE, hWnd, hBoldFont);
+
+            LoadConfig();
+            RefreshListBox();
+            break;
+        }
+        case WM_CTLCOLORSTATIC: {
+            HDC hdc = (HDC)wParam;
+            SetTextColor(hdc, RGB(30, 30, 30));
+            SetBkMode(hdc, TRANSPARENT);
+            return (LRESULT)hBkgBrush;
+        }
+        case WM_CTLCOLORDLG:
+        case WM_ERASEBKGND: {
+            HDC hdc = (HDC)wParam;
+            RECT rc;
+            GetClientRect(hWnd, &rc);
+            FillRect(hdc, &rc, hBkgBrush);
+            return 1;
+        }
+        case WM_COMMAND: {
+            int wmId = LOWORD(wParam);
+            int selListBoxIdx = (int)SendMessageW(hList, LB_GETCURSEL, 0, 0);
+            int toolIdx = -1;
+            if (selListBoxIdx != LB_ERR && selListBoxIdx < (int)g_listBoxMap.size()) {
+                toolIdx = g_listBoxMap[selListBoxIdx];
+            }
+
+            switch (wmId) {
+                case IDC_LIST_ITEMS:
+                    if (HIWORD(wParam) == LBN_SELCHANGE) {
+                        if (toolIdx != -1) LoadItemToEdits(toolIdx);
+                        else { SetWindowTextW(hEditName, L""); SetWindowTextW(hEditPath, L""); SetWindowTextW(hEditArgs, L""); SetWindowTextW(hEditHotkey, L""); }
+                    }
+                    break;
+                case IDC_BTN_UP:
+                    if (toolIdx > 0) {
+                        std::swap(g_tools[toolIdx], g_tools[toolIdx - 1]);
+                        RefreshListBox();
+                        for (size_t i = 0; i < g_listBoxMap.size(); i++) {
+                            if (g_listBoxMap[i] == toolIdx - 1) { SendMessageW(hList, LB_SETCURSEL, i, 0); break; }
+                        }
+                    }
+                    break;
+                case IDC_BTN_DOWN:
+                    if (toolIdx != -1 && toolIdx < (int)g_tools.size() - 1) {
+                        std::swap(g_tools[toolIdx], g_tools[toolIdx + 1]);
+                        RefreshListBox();
+                        for (size_t i = 0; i < g_listBoxMap.size(); i++) {
+                            if (g_listBoxMap[i] == toolIdx + 1) { SendMessageW(hList, LB_SETCURSEL, i, 0); break; }
+                        }
+                    }
+                    break;
+                case IDC_BTN_ADD:
+                    if (toolIdx == -1) { 
+                        wchar_t buf[1024];
+                        GetWindowTextW(hEditName, buf, 1024);
+                        if (wcslen(buf) == 0) { MessageBoxW(hWnd, L"Name cannot be empty!", L"Notice", MB_OK | MB_ICONWARNING); break; }
+                        g_tools.push_back({buf, L"", L"", L""});
+                        toolIdx = g_tools.size() - 1;
+                        UpdateItemFromEdits(toolIdx);
+                    } else {
+                        UpdateItemFromEdits(toolIdx);
+                    }
+                    RefreshListBox();
+                    for (size_t i = 0; i < g_listBoxMap.size(); i++) {
+                        if (g_listBoxMap[i] == toolIdx) { SendMessageW(hList, LB_SETCURSEL, i, 0); break; }
+                    }
+                    break;
+                case IDC_BTN_DEL:
+                    if (toolIdx != -1) {
+                        g_tools.erase(g_tools.begin() + toolIdx);
+                        RefreshListBox();
+                        SetWindowTextW(hEditName, L""); SetWindowTextW(hEditPath, L"");
+                        SetWindowTextW(hEditArgs, L""); SetWindowTextW(hEditHotkey, L"");
+                    }
+                    break;
+                case IDC_BTN_SEARCH: {
+                    WNDCLASSW wc = {0};
+                    wc.lpfnWndProc = SearchDlgProc;
+                    wc.hInstance = (HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE);
+                    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+                    wc.hbrBackground = hBkgBrush;
+                    wc.lpszClassName = L"RunItSearchDlg";
+                    RegisterClassW(&wc);
+                    
+                    EnableWindow(hWnd, FALSE);
+                    g_bSearchExecuted = false;
+                    
+                    HWND hDlg = CreateWindowExW(0, L"RunItSearchDlg", L"Auto Search Terminals", 
+                                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, 
+                                CW_USEDEFAULT, CW_USEDEFAULT, 460, 900, hWnd, NULL, wc.hInstance, NULL);
+                    ShowWindow(hDlg, SW_SHOW);
+                    SetForegroundWindow(hDlg);
+
+                    MSG msg;
+                    while (IsWindow(hDlg) && GetMessage(&msg, NULL, 0, 0)) {
+                        if (!IsDialogMessageW(hDlg, &msg)) {
+                            TranslateMessage(&msg);
+                            DispatchMessage(&msg);
+                        }
+                    }
+                    
+                    EnableWindow(hWnd, TRUE);
+                    SetForegroundWindow(hWnd);
+                    RefreshListBox();
+                    
+                    if (g_bSearchExecuted) {
+                        MessageBoxW(hWnd, L"Search complete! Checked items have been added to the list.\n(Items not found are marked as pending, please supplement the path in the main interface)", L"Notice", MB_OK | MB_ICONINFORMATION);
+                    }
+                    break;
+                }
+                case IDC_BTN_INJECT:
+                    if (InjectToSystemPath()) MessageBoxW(hWnd, L"Successfully injected the tool directory into the system PATH environment variable!", L"Success", MB_OK | MB_ICONINFORMATION);
+                    else MessageBoxW(hWnd, L"Injection failed, please check permissions.", L"Error", MB_OK | MB_ICONERROR);
+                    break;
+                case IDC_BTN_SAVE:
+                    if (toolIdx != -1) UpdateItemFromEdits(toolIdx);
+                    SaveConfig();
+                    MessageBoxW(hWnd, L"Config saved successfully to config.txt!", L"Save Success", MB_OK | MB_ICONINFORMATION);
+                    break;
+            }
+            break;
+        }
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            break;
+        default:
+            return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
+
+void RunConfigGUI(HINSTANCE hInstance) {
+    const wchar_t* CLASS_NAME = L"RunItConfigWnd";
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc = ConfigWndProc;
+    wc.hInstance = hInstance;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = hBkgBrush;
+    wc.lpszClassName = CLASS_NAME;
+    RegisterClassW(&wc);
+
+    HWND hWnd = CreateWindowExW(0, CLASS_NAME, L"RunIt Settings", 
+                                WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX, 
+                                CW_USEDEFAULT, CW_USEDEFAULT, 790, 520, NULL, NULL, hInstance, NULL);
+    ShowWindow(hWnd, SW_SHOW);
+
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+}
+
+// ================== Win32 Entry Point ==================
+
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+    g_exeDir = GetExeDir();
+    
+    std::wstring args = pCmdLine;
+    while (!args.empty() && (args.front() == L' ' || args.front() == L'\t')) args.erase(args.begin());
+    while (!args.empty() && (args.back() == L' ' || args.back() == L'\t')) args.pop_back();
+
+    if (args == L"/config" || args == L"-config") { RunConfigGUI(hInstance); return 0; }
+
+    bool isNumeric = !args.empty();
+    for (wchar_t c : args) {
+        if (c < L'0' || c > L'9') { isNumeric = false; break; }
+    }
+
+    if (isNumeric) {
+        LoadConfig();
+        int index = std::stoi(args);
+        LaunchToolByIndex(index, hInstance);
+    } else {
+        RunMenuMode(hInstance);
+    }
+    return 0;
+}
