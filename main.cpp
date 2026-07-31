@@ -354,133 +354,216 @@ void ExecuteSearch(HWND hParent, std::vector<int> targets) {
     std::wstring sysPs = sysDir + L"\\WindowsPowerShell\\v1.0\\powershell.exe";
 
     std::wstring ps7Path = FindExecutablePath(L"pwsh.exe");
-    if (ps7Path.empty()) { ps7Path = L"C:\\Program Files\\PowerShell\\7\\pwsh.exe"; if (!FileExistsW(ps7Path)) ps7Path = L"C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe"; if (!FileExistsW(ps7Path)) ps7Path = L""; }
+    if (ps7Path.empty()) {
+        ps7Path = L"C:\\Program Files\\PowerShell\\7\\pwsh.exe";
+        if (!FileExistsW(ps7Path)) ps7Path = L"C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe";
+        if (!FileExistsW(ps7Path)) ps7Path = L"";
+    }
 
     for (int id : targets) {
         std::wstring name = L"", path = L"", args = L"";
         
         switch (id) {
-            case IDC_CHK_GIT_BASH:
-                name = L"Git Bash";
-                path = FindExecutablePath(L"git-bash.exe");
-                if (path.empty()) { path = L"C:\\Program Files\\Git\\git-bash.exe"; if (!FileExistsW(path)) path = L"C:\\Program Files (x86)\\Git\\git-bash.exe"; if (!FileExistsW(path)) path = L""; }
-                break;
-            case IDC_CHK_GIT_CMD:
-                name = L"Git CMD";
+        case IDC_CHK_GIT_BASH:
+            name = L"Git Bash";
+            path = FindExecutablePath(L"git-bash.exe");
+            break;
+        case IDC_CHK_GIT_CMD:
+            name = L"Git CMD";
+            {
+                std::wstring gitExe = FindExecutablePath(L"git.exe");
+                if (!gitExe.empty())
                 {
-                    std::wstring gitExe = FindExecutablePath(L"git.exe");
-                    if (gitExe.empty()) { gitExe = L"C:\\Program Files\\Git\\cmd\\git.exe"; if (!FileExistsW(gitExe)) gitExe = L"C:\\Program Files (x86)\\Git\\cmd\\git.exe"; if (!FileExistsW(gitExe)) gitExe = L""; }
-                    if (!gitExe.empty()) { path = sysCmd; args = L"/K \"" + fs::path(gitExe).parent_path().parent_path().wstring() + L"\\cmd\\git.cmd\" & cd /D \"{current_dir}\""; }
+                    path = sysCmd;
+                    args = L"/K \"" + fs::path(gitExe).parent_path().parent_path().wstring() + L"\\cmd\\git.cmd\" & cd /D \"{current_dir}\"";
                 }
-                break;
-            case IDC_CHK_PS:
-                name = L"PowerShell";
-                path = FindExecutablePath(L"powershell.exe");
-                if (path.empty() && !sysDir.empty()) path = sysPs;
-                if (!path.empty()) args = L"-NoExit -Command Set-Location '{current_dir}'";
-                break;
-            case IDC_CHK_PS7:
-                name = L"PowerShell 7";
-                path = ps7Path;
-                if (!path.empty()) args = L"-NoExit -Command Set-Location '{current_dir}'";
-                break;
-            case IDC_CHK_WT:
-                name = L"Windows Terminal";
-                path = FindExecutablePath(L"wt.exe");
-                if (path.empty()) { wchar_t* lad = _wgetenv(L"LOCALAPPDATA"); if (lad) path = std::wstring(lad) + L"\\Microsoft\\WindowsApps\\wt.exe"; if (!FileExistsW(path)) path = L""; }
-                if (!path.empty()) args = L"-d \"{current_dir}\"";
-                break;
-            case IDC_CHK_CMD:
-                name = L"CMD";
-                path = sysCmd;
-                args = L"/K cd /D \"{current_dir}\"";
-                break;
-            case IDC_CHK_CONDA_PS:
-                name = L"Anaconda PowerShell";
-                { std::wstring cb = FindCondaBasePath(); if (!cb.empty()) { path = sysPs; args = L"-NoExit -Command & '" + cb + L"\\shell\\condabin\\conda-hook.ps1'; conda activate '" + cb + L"'; Set-Location '{current_dir}'"; } }
-                break;
-            case IDC_CHK_CONDA_CMD:
-                name = L"Anaconda Prompt";
-                { std::wstring cb = FindCondaBasePath(); if (!cb.empty()) { path = sysCmd; args = L"/K \"" + cb + L"\\Scripts\\activate.bat\" \"" + cb + L"\" & cd /D \"{current_dir}\""; } }
-                break;
-            case IDC_CHK_VS_X64:
-                name = L"VS x64 Native";
-                { std::wstring bp = FindVsBatch(L"vcvars64.bat"); if (!bp.empty()) { path = sysCmd; args = L"/K \"" + bp + L"\" & cd /D \"{current_dir}\""; } }
-                break;
-            case IDC_CHK_VS_X86:
-                name = L"VS x64_x86 Cross";
-                { std::wstring bp = FindVsBatch(L"vcvarsamd64_x86.bat"); if (!bp.empty()) { path = sysCmd; args = L"/K \"" + bp + L"\" & cd /D \"{current_dir}\""; } }
-                break;
-            case IDC_CHK_MSYS2_MINGW64:
-                name = L"MSYS2 MinGW x64"; args = L"-mingw64 -here";
-                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
-                break;
-            case IDC_CHK_MSYS2_MINGW32:
-                name = L"MSYS2 MinGW x86"; args = L"-mingw32 -here";
-                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
-                break;
-            case IDC_CHK_MSYS2_MSYS:
-                name = L"MSYS2 MSYS"; args = L"-msys -here";
-                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
-                break;
-            case IDC_CHK_MSYS2_CLANG64:
-                name = L"MSYS2 Clang x64"; args = L"-clang64 -here";
-                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
-                break;
-            case IDC_CHK_MSYS2_UCRT64:
-                name = L"MSYS2 UCRT x64"; args = L"-ucrt64 -here";
-                { std::wstring mp = FindMSYS2Path(); if (!mp.empty()) path = mp + L"\\msys2_shell.cmd"; }
-                break;
-            case IDC_CHK_CMDER:
-                name = L"Cmder"; path = FindCmderPath(); break;
-            case IDC_CHK_CONEMU:
-                name = L"ConEmu"; path = FindConEmuPath(); break;
-            case IDC_CHK_ZELLIJ:
-                name = L"Zellij (WSL)"; 
-                path = ps7Path;
-                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}' zellij\"";
-                break;
-            case IDC_CHK_TMUX:
-                name = L"Tmux (WSL)"; 
-                path = ps7Path;
-                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}' tmux\"";
-                break;
-            case IDC_CHK_WARP:
-                name = L"Warp"; path = FindWarpPath(); break;
-            case IDC_CHK_WSL_PS7:
-                name = L"WSL (PowerShell 7)"; 
-                path = ps7Path;
-                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}'\"";
-                break;
-            case IDC_CHK_WSL_CMD:
-                name = L"WSL (CMD)"; 
-                path = sysCmd;
-                args = L"/K wsl --cd \"{current_dir}\"";
-                break;
-            case IDC_CHK_ZELLIJ_WIN:
-                name = L"Zellij"; 
-                path = FindExecutablePath(L"zellij.exe");
-                break;
-            case IDC_CHK_CODEX_PS:
-                name = L"Codex (PowerShell)"; 
-                path = ps7Path;
-                if (!path.empty()) args = L"-NoExit -Command \"cd '{current_dir}'; codex\"";
-                break;
-            case IDC_CHK_CLAUDE_PS:
-                name = L"Claude Code (PowerShell)"; 
-                path = ps7Path;
-                if (!path.empty()) args = L"-NoExit -Command \"cd '{current_dir}'; claude\"";
-                break;
-            case IDC_CHK_CODEX_WSL:
-                name = L"Codex (WSL)"; 
-                path = ps7Path;
-                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}' codex\"";
-                break;
-            case IDC_CHK_CLAUDE_WSL:
-                name = L"Claude Code (WSL)"; 
-                path = ps7Path;
-                if (!path.empty()) args = L"-NoExit -Command \"wsl --cd '{current_dir}' claude\"";
-                break;
+            }
+            break;
+        case IDC_CHK_PS:
+            name = L"PowerShell";
+            path = FindExecutablePath(L"powershell.exe");
+            if (path.empty() && !sysDir.empty())
+                path = sysPs;
+            if (!path.empty())
+                args = L"-NoExit -Command Set-Location '{current_dir}'";
+            break;
+        case IDC_CHK_PS7:
+            name = L"PowerShell 7";
+            path = ps7Path;
+            if (!path.empty())
+                args = L"-NoExit -Command Set-Location '{current_dir}'";
+            break;
+        case IDC_CHK_WT:
+            name = L"Windows Terminal";
+            path = FindExecutablePath(L"wt.exe");
+            if (path.empty())
+            {
+                wchar_t *lad = _wgetenv(L"LOCALAPPDATA");
+                if (lad)
+                    path = std::wstring(lad) + L"\\Microsoft\\WindowsApps\\wt.exe";
+                if (!FileExistsW(path))
+                    path = L"";
+            }
+            if (!path.empty())
+                args = L"-d \"{current_dir}\"";
+            break;
+        case IDC_CHK_CMD:
+            name = L"CMD";
+            path = sysCmd;
+            args = L"/K cd /D \"{current_dir}\"";
+            break;
+        case IDC_CHK_CONDA_PS:
+            name = L"Anaconda PowerShell";
+            {
+                std::wstring cb = FindCondaBasePath();
+                if (!cb.empty())
+                {
+                    path = sysPs;
+                    args = L"-NoExit -Command & '" + cb + L"\\shell\\condabin\\conda-hook.ps1'; conda activate '" + cb + L"'; Set-Location '{current_dir}'";
+                }
+            }
+            break;
+        case IDC_CHK_CONDA_CMD:
+            name = L"Anaconda Prompt";
+            {
+                std::wstring cb = FindCondaBasePath();
+                if (!cb.empty())
+                {
+                    path = sysCmd;
+                    args = L"/K \"" + cb + L"\\Scripts\\activate.bat\" \"" + cb + L"\" & cd /D \"{current_dir}\"";
+                }
+            }
+            break;
+        case IDC_CHK_VS_X64:
+            name = L"VS x64 Native";
+            {
+                std::wstring bp = FindVsBatch(L"vcvars64.bat");
+                if (!bp.empty())
+                {
+                    path = sysCmd;
+                    args = L"/K \"" + bp + L"\" & cd /D \"{current_dir}\"";
+                }
+            }
+            break;
+        case IDC_CHK_VS_X86:
+            name = L"VS x64_x86 Cross";
+            {
+                std::wstring bp = FindVsBatch(L"vcvarsamd64_x86.bat");
+                if (!bp.empty())
+                {
+                    path = sysCmd;
+                    args = L"/K \"" + bp + L"\" & cd /D \"{current_dir}\"";
+                }
+            }
+            break;
+        case IDC_CHK_MSYS2_MINGW64:
+            name = L"MSYS2 MinGW x64";
+            args = L"-mingw64 -here";
+            {
+                std::wstring mp = FindMSYS2Path();
+                if (!mp.empty())
+                    path = mp + L"\\msys2_shell.cmd";
+            }
+            break;
+        case IDC_CHK_MSYS2_MINGW32:
+            name = L"MSYS2 MinGW x86";
+            args = L"-mingw32 -here";
+            {
+                std::wstring mp = FindMSYS2Path();
+                if (!mp.empty())
+                    path = mp + L"\\msys2_shell.cmd";
+            }
+            break;
+        case IDC_CHK_MSYS2_MSYS:
+            name = L"MSYS2 MSYS";
+            args = L"-msys -here";
+            {
+                std::wstring mp = FindMSYS2Path();
+                if (!mp.empty())
+                    path = mp + L"\\msys2_shell.cmd";
+            }
+            break;
+        case IDC_CHK_MSYS2_CLANG64:
+            name = L"MSYS2 Clang x64";
+            args = L"-clang64 -here";
+            {
+                std::wstring mp = FindMSYS2Path();
+                if (!mp.empty())
+                    path = mp + L"\\msys2_shell.cmd";
+            }
+            break;
+        case IDC_CHK_MSYS2_UCRT64:
+            name = L"MSYS2 UCRT x64";
+            args = L"-ucrt64 -here";
+            {
+                std::wstring mp = FindMSYS2Path();
+                if (!mp.empty())
+                    path = mp + L"\\msys2_shell.cmd";
+            }
+            break;
+        case IDC_CHK_CMDER:
+            name = L"Cmder";
+            path = FindCmderPath();
+            break;
+        case IDC_CHK_CONEMU:
+            name = L"ConEmu";
+            path = FindConEmuPath();
+            break;
+        case IDC_CHK_ZELLIJ:
+            name = L"Zellij (WSL)";
+            path = ps7Path;
+            if (!path.empty())
+                args = L"-NoExit -Command \"wsl --cd '{current_dir}' zellij\"";
+            break;
+        case IDC_CHK_TMUX:
+            name = L"Tmux (WSL)";
+            path = ps7Path;
+            if (!path.empty())
+                args = L"-NoExit -Command \"wsl --cd '{current_dir}' tmux\"";
+            break;
+        case IDC_CHK_WARP:
+            name = L"Warp";
+            path = FindWarpPath();
+            break;
+        case IDC_CHK_WSL_PS7:
+            name = L"WSL (PowerShell 7)";
+            path = ps7Path;
+            if (!path.empty())
+                args = L"-NoExit -Command \"wsl --cd '{current_dir}'\"";
+            break;
+        case IDC_CHK_WSL_CMD:
+            name = L"WSL (CMD)";
+            path = sysCmd;
+            args = L"/K wsl --cd \"{current_dir}\"";
+            break;
+        case IDC_CHK_ZELLIJ_WIN:
+            name = L"Zellij";
+            path = FindExecutablePath(L"zellij.exe");
+            break;
+        case IDC_CHK_CODEX_PS:
+            name = L"Codex (PowerShell)";
+            path = ps7Path;
+            if (!path.empty())
+                args = L"-NoExit -Command \"cd '{current_dir}'; codex\"";
+            break;
+        case IDC_CHK_CLAUDE_PS:
+            name = L"Claude Code (PowerShell)";
+            path = ps7Path;
+            if (!path.empty())
+                args = L"-NoExit -Command \"cd '{current_dir}'; claude\"";
+            break;
+        case IDC_CHK_CODEX_WSL:
+            name = L"Codex (WSL)";
+            path = ps7Path;
+            if (!path.empty())
+                args = L"-NoExit -Command \"wsl --cd '{current_dir}' codex\"";
+            break;
+        case IDC_CHK_CLAUDE_WSL:
+            name = L"Claude Code (WSL)";
+            path = ps7Path;
+            if (!path.empty())
+                args = L"-NoExit -Command \"wsl --cd '{current_dir}' claude\"";
+            break;
         }
         AddTool(name, path, args);
     }
@@ -489,6 +572,11 @@ void ExecuteSearch(HWND hParent, std::vector<int> targets) {
 bool g_bSearchExecuted = false;
 
 LRESULT CALLBACK SearchDlgProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    // Static variables to track scroll state and content size
+    static int scrollPos = 0;
+    static int contentHeight = 0;
+    static int btnY = 0;
+
     switch (message) {
         case WM_CREATE: {
             CreateCtrl(L"STATIC", L"Please check the terminals to search automatically:", 0, 0, 20, 15, 400, 20, NULL, hWnd, hGlobalFont);
@@ -499,20 +587,55 @@ LRESULT CALLBACK SearchDlgProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
                 y += 28;
                 id++;
             };
-            AddChk(L"Git Bash"); AddChk(L"Git CMD"); AddChk(L"PowerShell"); AddChk(L"PowerShell 7");
-            AddChk(L"Windows Terminal"); AddChk(L"CMD");
-            AddChk(L"Anaconda PowerShell Prompt"); AddChk(L"Anaconda Prompt");
-            AddChk(L"VS x64 Native Tools Cmd"); AddChk(L"VS x64_x86 Cross Tools Cmd");
-            AddChk(L"MSYS2 MinGW x64"); AddChk(L"MSYS2 MinGW x86"); AddChk(L"MSYS2 MSYS");
-            AddChk(L"MSYS2 MinGW Clang x64"); AddChk(L"MSYS2 MinGW UCRT x64");
-            AddChk(L"Cmder"); AddChk(L"ConEmu");
-            AddChk(L"Zellij (WSL)"); AddChk(L"Tmux (WSL)"); AddChk(L"Warp");
-            AddChk(L"WSL (PowerShell 7)"); AddChk(L"WSL (CMD)");
+            AddChk(L"Git Bash");
+            AddChk(L"Git CMD");
+            AddChk(L"PowerShell");
+            AddChk(L"PowerShell 7");
+            AddChk(L"Windows Terminal");
+            AddChk(L"CMD");
+            AddChk(L"Anaconda PowerShell Prompt");
+            AddChk(L"Anaconda Prompt");
+            AddChk(L"VS x64 Native Tools Cmd");
+            AddChk(L"VS x64_x86 Cross Tools Cmd");
+            AddChk(L"MSYS2 MinGW x64");
+            AddChk(L"MSYS2 MinGW x86");
+            AddChk(L"MSYS2 MSYS");
+            AddChk(L"MSYS2 MinGW Clang x64");
+            AddChk(L"MSYS2 MinGW UCRT x64");
+            AddChk(L"Cmder");
+            AddChk(L"ConEmu");
+            AddChk(L"Zellij (WSL)");
+            AddChk(L"Tmux (WSL)");
+            AddChk(L"Warp");
+            AddChk(L"WSL (PowerShell 7)");
+            AddChk(L"WSL (CMD)");
             AddChk(L"Zellij (Windows Native)");
-            AddChk(L"Codex (PowerShell)"); AddChk(L"Claude Code (PowerShell)");
-            AddChk(L"Codex (WSL)"); AddChk(L"Claude Code (WSL)");
+            AddChk(L"Codex (PowerShell)");
+            AddChk(L"Claude Code (PowerShell)");
+            AddChk(L"Codex (WSL)");
+            AddChk(L"Claude Code (WSL)");
+
+            btnY = y + 10;
+            CreateCtrl(L"BUTTON", L"Start Search", 0, 0, 20, btnY, 400, 35, (HMENU)(INT_PTR)IDC_BTN_DO_SEARCH, hWnd, hBoldFont);
             
-            CreateCtrl(L"BUTTON", L"Start Search", 0, 0, 20, y + 10, 400, 35, (HMENU)(INT_PTR)IDC_BTN_DO_SEARCH, hWnd, hBoldFont);
+            // Calculate total height of all controls (bottom of button + margin)
+            contentHeight = btnY + 35 + 20;
+            scrollPos = 0;
+
+            // Setup vertical scrollbar if the window has the WS_VSCROLL style
+            DWORD style = (DWORD)GetWindowLongPtr(hWnd, GWL_STYLE);
+            if (style & WS_VSCROLL) {
+                RECT rcClient;
+                GetClientRect(hWnd, &rcClient);
+                SCROLLINFO sc = {0};
+                sc.cbSize = sizeof(sc);
+                sc.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+                sc.nMin = 0;
+                sc.nMax = contentHeight;
+                sc.nPage = rcClient.bottom;
+                sc.nPos = 0;
+                SetScrollInfo(hWnd, SB_VERT, &sc, TRUE);
+            }
             break;
         }
         case WM_COMMAND: {
@@ -531,10 +654,56 @@ LRESULT CALLBACK SearchDlgProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
             }
             break;
         }
-        case WM_CLOSE: {
-            DestroyWindow(hWnd);
+        case WM_VSCROLL: {
+            // Only process scroll messages if the window actually has a scrollbar
+            DWORD style = (DWORD)GetWindowLongPtr(hWnd, GWL_STYLE);
+            if (!(style & WS_VSCROLL)) break;
+
+            SCROLLINFO scr = {0};
+            scr.cbSize = sizeof(scr);
+            scr.fMask = SIF_ALL;
+            GetScrollInfo(hWnd, SB_VERT, &scr);
+
+            int yPos = scr.nPos;
+            switch (LOWORD(wParam)) {
+                case SB_TOP:        scr.nPos = scr.nMin; break;
+                case SB_BOTTOM:     scr.nPos = scr.nMax; break;
+                case SB_LINEUP:     scr.nPos -= 30; break;
+                case SB_LINEDOWN:   scr.nPos += 30; break;
+                case SB_PAGEUP:     scr.nPos -= scr.nPage; break;
+                case SB_PAGEDOWN:   scr.nPos += scr.nPage; break;
+                case SB_THUMBTRACK: scr.nPos = scr.nTrackPos; break;
+                default: break;
+            }
+            
+            // Constrain scroll position within valid bounds
+            scr.nPos = std::max(0, scr.nPos);
+            scr.nPos = std::min(scr.nPos, scr.nMax - (int)scr.nPage);
+            
+            // Apply the new position
+            scr.fMask = SIF_POS;
+            SetScrollInfo(hWnd, SB_VERT, &scr, TRUE);
+            GetScrollInfo(hWnd, SB_VERT, &scr);
+            
+            // If the position changed, scroll the window contents
+            if (scr.nPos != yPos) {
+                ScrollWindow(hWnd, 0, yPos - scr.nPos, NULL, NULL);
+                UpdateWindow(hWnd);
+                scrollPos = scr.nPos;
+            }
             return 0;
         }
+        case WM_MOUSEWHEEL: {
+            // Support mouse wheel scrolling
+            DWORD style = (DWORD)GetWindowLongPtr(hWnd, GWL_STYLE);
+            if (!(style & WS_VSCROLL)) break;
+            
+            int zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+            if (zDelta < 0) SendMessage(hWnd, WM_VSCROLL, SB_PAGEDOWN, 0);
+            else SendMessage(hWnd, WM_VSCROLL, SB_PAGEUP, 0);
+            return 0;
+        }
+        case WM_CLOSE: { DestroyWindow(hWnd); return 0; }
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORDLG: {
             HDC hdc = (HDC)wParam;
@@ -757,54 +926,11 @@ LRESULT CALLBACK ConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
             }
 
             switch (wmId) {
-                case IDC_LIST_ITEMS:
-                    if (HIWORD(wParam) == LBN_SELCHANGE) {
-                        if (toolIdx != -1) LoadItemToEdits(toolIdx);
-                        else { SetWindowTextW(hEditName, L""); SetWindowTextW(hEditPath, L""); SetWindowTextW(hEditArgs, L""); SetWindowTextW(hEditHotkey, L""); }
-                    }
-                    break;
-                case IDC_BTN_UP:
-                    if (toolIdx > 0) {
-                        std::swap(g_tools[toolIdx], g_tools[toolIdx - 1]);
-                        RefreshListBox();
-                        for (size_t i = 0; i < g_listBoxMap.size(); i++) {
-                            if (g_listBoxMap[i] == toolIdx - 1) { SendMessageW(hList, LB_SETCURSEL, i, 0); break; }
-                        }
-                    }
-                    break;
-                case IDC_BTN_DOWN:
-                    if (toolIdx != -1 && toolIdx < (int)g_tools.size() - 1) {
-                        std::swap(g_tools[toolIdx], g_tools[toolIdx + 1]);
-                        RefreshListBox();
-                        for (size_t i = 0; i < g_listBoxMap.size(); i++) {
-                            if (g_listBoxMap[i] == toolIdx + 1) { SendMessageW(hList, LB_SETCURSEL, i, 0); break; }
-                        }
-                    }
-                    break;
-                case IDC_BTN_ADD:
-                    if (toolIdx == -1) { 
-                        wchar_t buf[1024];
-                        GetWindowTextW(hEditName, buf, 1024);
-                        if (wcslen(buf) == 0) { MessageBoxW(hWnd, L"Name cannot be empty!", L"Notice", MB_OK | MB_ICONWARNING); break; }
-                        g_tools.push_back({buf, L"", L"", L""});
-                        toolIdx = g_tools.size() - 1;
-                        UpdateItemFromEdits(toolIdx);
-                    } else {
-                        UpdateItemFromEdits(toolIdx);
-                    }
-                    RefreshListBox();
-                    for (size_t i = 0; i < g_listBoxMap.size(); i++) {
-                        if (g_listBoxMap[i] == toolIdx) { SendMessageW(hList, LB_SETCURSEL, i, 0); break; }
-                    }
-                    break;
-                case IDC_BTN_DEL:
-                    if (toolIdx != -1) {
-                        g_tools.erase(g_tools.begin() + toolIdx);
-                        RefreshListBox();
-                        SetWindowTextW(hEditName, L""); SetWindowTextW(hEditPath, L"");
-                        SetWindowTextW(hEditArgs, L""); SetWindowTextW(hEditHotkey, L"");
-                    }
-                    break;
+                case IDC_LIST_ITEMS: if (HIWORD(wParam) == LBN_SELCHANGE) { if (toolIdx != -1) LoadItemToEdits(toolIdx); else { SetWindowTextW(hEditName, L""); SetWindowTextW(hEditPath, L""); SetWindowTextW(hEditArgs, L""); SetWindowTextW(hEditHotkey, L""); } } break;
+                case IDC_BTN_UP: if (toolIdx > 0) { std::swap(g_tools[toolIdx], g_tools[toolIdx - 1]); RefreshListBox(); for (size_t i = 0; i < g_listBoxMap.size(); i++) { if (g_listBoxMap[i] == toolIdx - 1) { SendMessageW(hList, LB_SETCURSEL, i, 0); break; } } } break;
+                case IDC_BTN_DOWN: if (toolIdx != -1 && toolIdx < (int)g_tools.size() - 1) { std::swap(g_tools[toolIdx], g_tools[toolIdx + 1]); RefreshListBox(); for (size_t i = 0; i < g_listBoxMap.size(); i++) { if (g_listBoxMap[i] == toolIdx + 1) { SendMessageW(hList, LB_SETCURSEL, i, 0); break; } } } break;
+                case IDC_BTN_ADD: if (toolIdx == -1) { wchar_t buf[1024]; GetWindowTextW(hEditName, buf, 1024); if (wcslen(buf) == 0) { MessageBoxW(hWnd, L"Name cannot be empty!", L"Notice", MB_OK | MB_ICONWARNING); break; } g_tools.push_back({buf, L"", L"", L""}); toolIdx = g_tools.size() - 1; UpdateItemFromEdits(toolIdx); } else { UpdateItemFromEdits(toolIdx); } RefreshListBox(); for (size_t i = 0; i < g_listBoxMap.size(); i++) { if (g_listBoxMap[i] == toolIdx) { SendMessageW(hList, LB_SETCURSEL, i, 0); break; } } break;
+                case IDC_BTN_DEL: if (toolIdx != -1) { g_tools.erase(g_tools.begin() + toolIdx); RefreshListBox(); SetWindowTextW(hEditName, L""); SetWindowTextW(hEditPath, L""); SetWindowTextW(hEditArgs, L""); SetWindowTextW(hEditHotkey, L""); } break;
                 case IDC_BTN_SEARCH: {
                     WNDCLASSW wc = {0};
                     wc.lpfnWndProc = SearchDlgProc;
@@ -816,13 +942,24 @@ LRESULT CALLBACK ConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
                     
                     EnableWindow(hWnd, FALSE);
                     g_bSearchExecuted = false;
-                    
-                    HWND hDlg = CreateWindowExW(0, L"RunItSearchDlg", L"Auto Search Terminals", 
-                                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, 
-                                CW_USEDEFAULT, CW_USEDEFAULT, 460, 900, hWnd, NULL, wc.hInstance, NULL);
+
+                    // Dynamically calculate max window height based on screen work area
+                    RECT rcWorkArea;
+                    SystemParametersInfo(SPI_GETWORKAREA, 0, &rcWorkArea, 0);
+                    int maxScreenHeight = rcWorkArea.bottom - rcWorkArea.top - 50;
+                    int idealHeight = 900;
+                    int finalHeight = idealHeight;
+                    DWORD dwStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+
+                    // Add vertical scrollbar if screen is too small
+                    if (idealHeight > maxScreenHeight) {
+                        finalHeight = maxScreenHeight;
+                        dwStyle |= WS_VSCROLL;
+                    }
+
+                    HWND hDlg = CreateWindowExW(0, L"RunItSearchDlg", L"Auto Search Terminals", dwStyle, CW_USEDEFAULT, CW_USEDEFAULT, 460, finalHeight, hWnd, NULL, wc.hInstance, NULL);
                     ShowWindow(hDlg, SW_SHOW);
                     SetForegroundWindow(hDlg);
-
                     MSG msg;
                     while (IsWindow(hDlg) && GetMessage(&msg, NULL, 0, 0)) {
                         if (!IsDialogMessageW(hDlg, &msg)) {
@@ -830,7 +967,6 @@ LRESULT CALLBACK ConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
                             DispatchMessage(&msg);
                         }
                     }
-                    
                     EnableWindow(hWnd, TRUE);
                     SetForegroundWindow(hWnd);
                     RefreshListBox();
@@ -840,15 +976,8 @@ LRESULT CALLBACK ConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
                     }
                     break;
                 }
-                case IDC_BTN_INJECT:
-                    if (InjectToSystemPath()) MessageBoxW(hWnd, L"Successfully injected the tool directory into the system PATH environment variable!", L"Success", MB_OK | MB_ICONINFORMATION);
-                    else MessageBoxW(hWnd, L"Injection failed, please check permissions.", L"Error", MB_OK | MB_ICONERROR);
-                    break;
-                case IDC_BTN_SAVE:
-                    if (toolIdx != -1) UpdateItemFromEdits(toolIdx);
-                    SaveConfig();
-                    MessageBoxW(hWnd, L"Config saved successfully to config.ini!", L"Save Success", MB_OK | MB_ICONINFORMATION);
-                    break;
+                case IDC_BTN_INJECT: if (InjectToSystemPath()) MessageBoxW(hWnd, L"Successfully injected the tool directory into the system PATH environment variable!", L"Success", MB_OK | MB_ICONINFORMATION); else MessageBoxW(hWnd, L"Injection failed, please check permissions.", L"Error", MB_OK | MB_ICONERROR); break;
+                case IDC_BTN_SAVE: if (toolIdx != -1) UpdateItemFromEdits(toolIdx); SaveConfig(); MessageBoxW(hWnd, L"Config saved successfully to config.ini!", L"Save Success", MB_OK | MB_ICONINFORMATION); break;
             }
             break;
         }
