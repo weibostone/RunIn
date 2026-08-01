@@ -11,6 +11,16 @@ Whether you are using PowerShell, Git Bash, MSYS2, Cmder, or even WSL-based tool
 
 ---
 
+## 🎬 Demo
+
+The following GIF demonstrates the typical usage of RunIn (type `ri` in the File Explorer address bar, select Git Bash from the popup menu; and type `ri 1` to directly launch Git Bash):
+
+![RunIn Demo](assets/introduce.gif)
+
+> If the animation does not display, ensure `assets/introduce.gif` is placed in the `assets` folder under the project root, or simply try the program yourself.
+
+---
+
 ## ✨ Key Features
 
 - **Popup menu at cursor**: Type `ri` in the File Explorer address bar, or double-click `ri.exe` (or bind it to your mouse side button) to pop up the menu. Select any terminal to launch it and automatically switch to the current directory. For example, you can launch PowerShell 7 directly from the File Explorer address bar, enter Claude Code or Codex, and switch to the current directory seamlessly.
@@ -50,16 +60,6 @@ Type `ri` in the File Explorer address bar, or double-click `ri.exe` (or bind it
 
 ### 3. Direct Command Line Launch
 You can bypass the menu by passing the index number as an argument. For example, if you remember that PowerShell is item #3 in the menu, you can type `ri 3` in the File Explorer address bar to directly launch PowerShell and switch to the current directory. This is perfect for integration with other tools or scripts.
-
----
-
-## 🎬 Demo
-
-The following GIF demonstrates the typical usage of RunIn (type `ri` in the File Explorer address bar, select Git Bash from the popup menu; and type `ri 1` to directly launch Git Bash):
-
-![RunIn Demo](assets/introduce.gif)
-
-> If the animation does not display, ensure `assets/introduce.gif` is placed in the `assets` folder under the project root, or simply try the program yourself.
 
 ---
 

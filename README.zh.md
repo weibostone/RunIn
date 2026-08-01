@@ -11,6 +11,16 @@ RunIn 是一款专为 Windows 设计的轻量级、绿色、高可配置的终�
 
 ---
 
+## 🎬 演示
+
+下图展示了 RunIn 的典型使用流程（Windows文件资源管理器的地址栏中输入`ri`，弹出菜单并选择Git Bash终端，以及通过输入`ri 1`，直接启动Git Bash终端）：
+
+![RunIn 使用演示](assets/introduce.gif)
+
+> 若动画未能正常显示，请确保 `assets/introduce.gif` 文件存在于项目根目录下的 `assets` 文件夹中，或直接运行程序体验。
+
+---
+
 ## ✨ 核心特性
 
 - **光标处弹出菜单**：Windows文件资源管理器的地址栏中输入`ri`或双击`ri.exe`（或绑定鼠标侧键）即可弹出菜单，选择所需终端即可。启动相应终端后，自动切换到当前目录。例如：支持在Windows文件资源管理器的地址栏直接启动PowerShell7终端，进入Claude Code或Codex程序，之后切换到当前目录。
@@ -50,16 +60,6 @@ Windows文件资源管理器的地址栏中输入`ri`或双击`ri.exe`（或绑�
 
 ### 3. 命令行直接启动
 你可以通过传入序号参数来跳过菜单弹窗，直接启动对应配置项，例如你记住了PowerShell在菜单中的序号是3，你可以Windows文件资源管理器的地址栏中输入`ri 3`直接启动PowerShell并且切换到当前目录。这非常适合与其他工具或脚本集成。
-
----
-
-## 🎬 演示
-
-下图展示了 RunIn 的典型使用流程（Windows文件资源管理器的地址栏中输入`ri`，弹出菜单并选择Git Bash终端，以及通过输入`ri 1`，直接启动Git Bash终端）：
-
-![RunIn 使用演示](assets/introduce.gif)
-
-> 若动画未能正常显示，请确保 `assets/introduce.gif` 文件存在于项目根目录下的 `assets` 文件夹中，或直接运行程序体验。
 
 ---
 
