@@ -158,7 +158,7 @@ void SaveConfig() {
 
 // ================== System Functions & Terminal Search ==================
 
-bool InjectToSystemPath() {
+bool AddToSystemPath() {
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ | KEY_WRITE, &hKey) != ERROR_SUCCESS) return false;
 
@@ -184,6 +184,67 @@ bool InjectToSystemPath() {
     SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"Environment", SMTO_ABORTIFHUNG, 5000, &result);
     return true;
 }
+
+// ================== System PATH Uninject ==================
+bool RemoveFromSystemPath() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ | KEY_WRITE, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    wchar_t pathVal[32767];
+    DWORD bufSize = sizeof(pathVal);
+    DWORD type = 0;
+    if (RegQueryValueExW(hKey, L"Path", NULL, &type, (LPBYTE)pathVal, &bufSize) != ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return false;
+    }
+
+    std::wstring currentPath = pathVal;
+    std::wstring exeDirStr = g_exeDir.wstring();
+
+    // Remove trailing backslash for consistent matching
+    if (!exeDirStr.empty() && exeDirStr.back() == L'\\') {
+        exeDirStr.pop_back();
+    }
+
+    size_t pos = currentPath.find(exeDirStr);
+    if (pos == std::wstring::npos) {
+        RegCloseKey(hKey);
+        return false; // Not found, nothing to remove
+    }
+
+    // Boundary check: Ensure we don't match partial paths (e.g., C:\RunIt inside C:\RunItBeta)
+    bool validStart = (pos == 0) || (currentPath[pos - 1] == L';');
+    bool validEnd = (pos + exeDirStr.length() == currentPath.length()) || (currentPath[pos + exeDirStr.length()] == L';');
+
+    if (!validStart || !validEnd) {
+        RegCloseKey(hKey);
+        return false; // Only found a partial match, do not remove
+    }
+
+    // Remove the directory and the associated semicolon
+    if (pos > 0 && currentPath[pos - 1] == L';') {
+        // Remove preceding semicolon and the directory
+        currentPath.erase(pos - 1, exeDirStr.length() + 1);
+    } else if (pos + exeDirStr.length() < currentPath.length() && currentPath[pos + exeDirStr.length()] == L';') {
+        // Remove directory and following semicolon
+        currentPath.erase(pos, exeDirStr.length() + 1);
+    } else {
+        // It's the only element in the PATH
+        currentPath.erase(pos, exeDirStr.length());
+    }
+
+    // Write back the modified path
+    DWORD newSize = (currentPath.size() + 1) * sizeof(wchar_t);
+    RegSetValueExW(hKey, L"Path", 0, REG_EXPAND_SZ, (LPBYTE)currentPath.c_str(), newSize);
+    RegCloseKey(hKey);
+
+    // Broadcast changes
+    DWORD_PTR result;
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"Environment", SMTO_ABORTIFHUNG, 5000, &result);
+    return true;
+}
+
 
 bool ToolExists(const std::wstring& name) {
     for (const auto& t : g_tools) if (t.name == name) return true;
@@ -792,9 +853,12 @@ void RunMenuMode(HINSTANCE hInstance) {
 #define IDC_BTN_DEL 107
 #define IDC_BTN_SEARCH 108
 #define IDC_BTN_INJECT 109
-#define IDC_BTN_SAVE 110
-#define IDC_BTN_UP 111
-#define IDC_BTN_DOWN 112
+#define IDC_BTN_UNINJECT 110
+#define IDC_BTN_SAVE 111
+#define IDC_BTN_UP 112
+#define IDC_BTN_DOWN 113
+#define IDC_BTN_OTHER1 114
+#define IDC_BTN_OTHER2 115
 
 HWND hList, hEditName, hEditPath, hEditArgs, hEditHotkey;
 
@@ -894,10 +958,13 @@ LRESULT CALLBACK ConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
             CreateCtrl(L"BUTTON", L"Add / Update", 0, 0, 380, 250, 180, 38, (HMENU)(INT_PTR)IDC_BTN_ADD, hWnd, hGlobalFont);
             CreateCtrl(L"BUTTON", L"Delete Selected", 0, 0, 580, 250, 180, 38, (HMENU)(INT_PTR)IDC_BTN_DEL, hWnd, hGlobalFont);
 
-            CreateCtrl(L"BUTTON", L"Auto Search Terminals", 0, 0, 380, 310, 180, 38, (HMENU)(INT_PTR)IDC_BTN_SEARCH, hWnd, hGlobalFont);
-            CreateCtrl(L"BUTTON", L"Inject System PATH", 0, 0, 580, 310, 180, 38, (HMENU)(INT_PTR)IDC_BTN_INJECT, hWnd, hGlobalFont);
+            // New layout for System PATH buttons
+            CreateCtrl(L"BUTTON", L"Auto Search Terminals", 0, 0, 380, 290, 380, 35, (HMENU)(INT_PTR)IDC_BTN_SEARCH, hWnd, hGlobalFont);
+            CreateCtrl(L"BUTTON", L"Add System PATH", 0, 0, 380, 330, 180, 35, (HMENU)(INT_PTR)IDC_BTN_INJECT, hWnd, hGlobalFont);
+            CreateCtrl(L"BUTTON", L"Remove System PATH", 0, 0, 580, 330, 180, 35, (HMENU)(INT_PTR)IDC_BTN_UNINJECT, hWnd, hGlobalFont);
             
-            CreateCtrl(L"BUTTON", L"Save Config & Apply", 0, 0, 380, 370, 380, 65, (HMENU)(INT_PTR)IDC_BTN_SAVE, hWnd, hBoldFont);
+            // Adjusted Save button position
+            CreateCtrl(L"BUTTON", L"Save Config Apply", 0, 0, 380, 375, 380, 60, (HMENU)(INT_PTR)IDC_BTN_SAVE, hWnd, hBoldFont);
 
             LoadConfig();
             RefreshListBox();
@@ -968,7 +1035,20 @@ LRESULT CALLBACK ConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
                         }
                     }
                     EnableWindow(hWnd, TRUE);
+
+                    // Unbreakable Foreground Hack: AttachThreadInput
+                    DWORD dwCurrentThread = GetCurrentThreadId();
+                    DWORD dwFGThread = GetWindowThreadProcessId(GetForegroundWindow(), NULL);
+                    if (dwFGThread != dwCurrentThread) {
+                        AttachThreadInput(dwCurrentThread, dwFGThread, TRUE);
+                    }
                     SetForegroundWindow(hWnd);
+                    SetActiveWindow(hWnd);
+                    SetFocus(hWnd);
+                    if (dwFGThread != dwCurrentThread) {
+                        AttachThreadInput(dwCurrentThread, dwFGThread, FALSE);
+                    }
+
                     RefreshListBox();
                     
                     if (g_bSearchExecuted) {
@@ -976,7 +1056,9 @@ LRESULT CALLBACK ConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
                     }
                     break;
                 }
-                case IDC_BTN_INJECT: if (InjectToSystemPath()) MessageBoxW(hWnd, L"Successfully injected the tool directory into the system PATH environment variable!", L"Success", MB_OK | MB_ICONINFORMATION); else MessageBoxW(hWnd, L"Injection failed, please check permissions.", L"Error", MB_OK | MB_ICONERROR); break;
+                case IDC_BTN_INJECT: if (AddToSystemPath()) MessageBoxW(hWnd, L"Successfully add the tool directory into the system PATH environment variable!", L"Success", MB_OK | MB_ICONINFORMATION); else MessageBoxW(hWnd, L"Add to system PATH failed, please check permissions.", L"Error", MB_OK | MB_ICONERROR); break;
+                // Handle Remove System PATH
+                case IDC_BTN_UNINJECT: if (RemoveFromSystemPath()) MessageBoxW(hWnd, L"Successfully removed the tool directory from the system PATH environment variable!", L"Success", MB_OK | MB_ICONINFORMATION); else MessageBoxW(hWnd, L"Removal failed, or the tool directory was not found in PATH.", L"Notice", MB_OK | MB_ICONWARNING);break;
                 case IDC_BTN_SAVE: if (toolIdx != -1) UpdateItemFromEdits(toolIdx); SaveConfig(); MessageBoxW(hWnd, L"Config saved successfully to config.ini!", L"Save Success", MB_OK | MB_ICONINFORMATION); break;
             }
             break;
