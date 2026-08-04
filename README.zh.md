@@ -5,6 +5,8 @@ RunIn 是一款专为 Windows 设计的轻量级、绿色、高可配置的终�
 
 无论你使用的是 PowerShell、Git Bash、MSYS2、Cmder，还是基于 WSL 的 Zellij 和 Claude Code，RunIn 都能将它们整合到一个便捷的快捷菜单中。
 
+常用场景：你用一个git bash工具打开了一个目录，从github上pull了最新代码到本地，之后又用调用x64 Native Tools Cmd打开了这个目录，进行编译，之后又调用vscode打开了这个目录，查看代码内容。
+
 ![RunIn Menu](https://img.shields.io/badge/Action-Cursor%20Menu-blue) 
 ![Portable](https://img.shields.io/badge/Mode-Portable-success)
 ![C++](https://img.shields.io/badge/Built%20with-C++%2B%2B%20Win32-red)
@@ -46,6 +48,7 @@ RunIn 能够自动检测并配置以下工具：
 | **终端模拟器** | Cmder, ConEmu, Warp |
 | **WSL 与复用器** | WSL (PS7), WSL (CMD), Zellij (WSL), Tmux (WSL) |
 | **现代 CLI / AI** | Zellij (原生), Codex (PowerShell/WSL), Claude Code (PowerShell/WSL) |
+| **其他图形界面工具** | VS Code, Virtual Stuido, File Explorer, ... |
 
 ---
 

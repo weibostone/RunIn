@@ -5,6 +5,8 @@ It allows you to instantly launch your favorite terminals, shells, or command-li
 
 Whether you are using PowerShell, Git Bash, MSYS2, Cmder, or even WSL-based tools like Zellij and Claude Code, RunIn brings them all together into a single, accessible context menu.
 
+A common scenario: You opened a directory in Git Bash and pulled the latest code from GitHub. Then, you opened the same directory using x64 Native Tools Command Prompt to compile the project. Afterward, you opened the directory in VS Code to review the code.
+
 ![RunIn Menu](https://img.shields.io/badge/Action-Cursor%20Menu-blue) 
 ![Portable](https://img.shields.io/badge/Mode-Portable-success)
 ![C++](https://img.shields.io/badge/Built%20with-C++%2B%2B%20Win32-red)
@@ -46,6 +48,7 @@ RunIn can automatically detect and configure the following tools:
 | **Emulators** | Cmder, ConEmu, Warp |
 | **WSL & Multiplexers**| WSL (PS7), WSL (CMD), Zellij (WSL), Tmux (WSL) |
 | **Modern CLI / AI** | Zellij (Native), Codex (PowerShell/WSL), Claude Code (PowerShell/WSL) |
+| **Other GUI tools** | VS Code, Virtual Stuido, File Explorer, ... |
 
 ---
 
