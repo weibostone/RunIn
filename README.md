@@ -23,7 +23,7 @@ The following GIF demonstrates the typical usage of RunIn (type `ri` in the File
 
 ## ✨ Key Features
 
-- **Popup menu at cursor**: Type `ri` in the File Explorer address bar, or double-click `ri.exe` (or bind it to your mouse side button) to pop up the menu. Select any terminal to launch it and automatically switch to the current directory. For example, you can launch PowerShell 7 directly from the File Explorer address bar, enter Claude Code or Codex, and switch to the current directory seamlessly.
+- **Popup menu at cursor**: Enter `ri` in the File Explorer address bar/terminals, or double-click `ri.exe` (or bind it to your mouse side button) to pop up the menu. Select any terminal to launch it and automatically switch to the current directory. For example, you can launch PowerShell 7 directly from the File Explorer address bar, enter Claude Code or Codex, and switch to the current directory seamlessly.
 - **One-Click Auto Search**: Built-in auto-discovery for over 20+ popular terminals and dev tools. Don't know the exact path? Let RunIn find them for you.
 - **Pending Templates**: If a selected terminal isn't installed, RunIn creates a "Pending" template in your config, allowing you to manually fill in the path later without breaking your list.
 - **Auto Working Directory Mapping**: Automatically maps your current File Explorer directory to the launched terminal using the `{current_dir}` dynamic variable. No more `cd` typing!
@@ -54,10 +54,13 @@ RunIn can automatically detect and configure the following tools:
 ### 1. First-time Setup
 Double-click `ri.exe` to pop up the menu, select the `Setting` item to enter the configuration interface. Click the `Add to System PATH` button to add `ri.exe`'s directory to the system PATH, making it convenient to launch RunIn from the address bar. Then, add your desired terminal tools to the menu. You can use the `Auto Search Terminals` button to automatically detect installed terminals on your system. After that, click `Save Config Apply` to exit the settings interface.
 
-### 2. Menu Mode
-Type `ri` in the File Explorer address bar, or double-click `ri.exe` (or bind it to your mouse side button) to pop up the menu. Select any terminal to launch it in the current directory.
+### 2. Address Bar Mode
+Enter `ri` in the File Explorer address bar, or double-click `ri.exe` (or bind it to your mouse side button) to pop up the menu. Select any terminal to launch it in the current directory.
 
-### 3. Direct Command Line Launch
+### 3. Terminal Mode
+Simply enter `ri` in various terminal applications to bring up a menu and select the desired terminal. Selecting any menu item will launch that terminal tool in the current directory. For example, when using CMD, if you need to open the current directory in Git Bash, simply enter `ri` and select Git Bash from the menu.
+
+### 4. Direct Command Line Launch
 You can bypass the menu by passing the index number as an argument. For example, if you remember that PowerShell is item #3 in the menu, you can type `ri 3` in the File Explorer address bar to directly launch PowerShell and switch to the current directory. This is perfect for integration with other tools or scripts.
 
 ---
