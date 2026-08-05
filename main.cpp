@@ -1,3 +1,5 @@
+#if defined(_WIN32)
+
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 // =================================================
@@ -1119,3 +1121,685 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
     return 0;
 }
+
+
+#else
+// ================== POSIX (Linux/Mac) Includes ==================
+#include <iostream>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <climits>
+#include <unistd.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <cctype>
+#include <cstring>
+#include <cstdlib>
+#include <termios.h>
+#include <cstdio>
+#include <cerrno>
+
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+
+extern char **environ;
+
+namespace fs = std::filesystem;
+
+// ================== Data Structures ==================
+struct ToolItem {
+    std::string name;
+    std::string path;
+    std::string args;
+    std::string shell;
+    std::string hotkey;
+    std::string type;  // "GUI", "SHELL", "MULTIPLEXER"
+};
+
+std::vector<ToolItem> g_tools;
+fs::path g_exeDir;
+
+// ================== Environment Awareness ==================
+bool IsSSHSession() {
+    return getenv("SSH_CONNECTION") != nullptr || getenv("SSH_CLIENT") != nullptr;
+}
+
+bool HasDisplay() {
+#if defined(__APPLE__)
+    const char* termProgram = getenv("TERM_PROGRAM");
+    if (termProgram) {
+        std::string p(termProgram);
+        if (p == "Apple_Terminal" || p == "iTerm.app" || p == "VSCode" || p == "Hyper") return true;
+    }
+    return false;
+#else
+    return getenv("DISPLAY") != nullptr || getenv("WAYLAND_DISPLAY") != nullptr;
+#endif
+}
+
+// ================== Helper Functions ==================
+fs::path GetExeDir() {
+#if defined(__APPLE__)
+    char buf[PATH_MAX];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) {
+        return fs::path(buf).parent_path();
+    }
+#else
+    char buf[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len != -1) {
+        buf[len] = '\0';
+        return fs::path(buf).parent_path();
+    }
+#endif
+    return fs::current_path();
+}
+
+fs::path GetConfigPath() {
+    fs::path exeConfig = g_exeDir / "config.ini";
+    if (fs::exists(exeConfig)) return exeConfig;
+    
+    const char* home = getenv("HOME");
+    if (home) {
+        fs::path homeConfig = fs::path(home) / ".config" / "RunIn" / "config.ini";
+        if (fs::exists(homeConfig)) return homeConfig;
+    }
+    return exeConfig;
+}
+
+std::vector<std::string> SplitArgs(const std::string& s) {
+    std::vector<std::string> args;
+    std::string current;
+    bool inQuotes = false;
+    for (char c : s) {
+        if (c == '"') {
+            inQuotes = !inQuotes;
+        } else if (std::isspace(c) && !inQuotes) {
+            if (!current.empty()) {
+                args.push_back(current);
+                current.clear();
+            }
+        } else {
+            current += c;
+        }
+    }
+    if (!current.empty()) {
+        args.push_back(current);
+    }
+    return args;
+}
+
+std::string FindExecutablePathPosix(const std::string& name) {
+    std::string cmd = "which " + name + " 2>/dev/null";
+    FILE* fp = popen(cmd.c_str(), "r");
+    if (fp) {
+        char buf[PATH_MAX];
+        if (fgets(buf, sizeof(buf), fp) != nullptr) {
+            std::string path = buf;
+            path.erase(path.find_last_not_of(" \n\r\t") + 1);
+            pclose(fp);
+            return path;
+        }
+        pclose(fp);
+    }
+    return "";
+}
+
+// ================== Config File R/W ==================
+void LoadConfig() {
+    g_tools.clear();
+    fs::path configPath = GetConfigPath();
+    if (!fs::exists(configPath)) return;
+    
+    std::ifstream ifs(configPath);
+    std::string line;
+    ToolItem currentTool;
+    bool inItem = false;
+    
+    while (std::getline(ifs, line)) {
+        line.erase(0, line.find_first_not_of(" \t\r\n"));
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+        
+        if (line.empty() || line[0] == '#') continue;
+        
+        if (!line.empty() && line.front() == '[' && line.back() == ']') {
+            std::string section = line.substr(1, line.size() - 2);
+            if (section.rfind("Item", 0) == 0) {
+                if (inItem) g_tools.push_back(currentTool);
+                currentTool = ToolItem();
+                inItem = true;
+            } else {
+                if (inItem) {
+                    g_tools.push_back(currentTool);
+                    inItem = false;
+                }
+            }
+        } else if (inItem) {
+            auto eqPos = line.find('=');
+            if (eqPos != std::string::npos) {
+                std::string key = line.substr(0, eqPos);
+                std::string val = line.substr(eqPos + 1);
+                if (key == "Name") currentTool.name = val;
+                else if (key == "Path") currentTool.path = val;
+                else if (key == "Args") currentTool.args = val;
+                else if (key == "Shell") currentTool.shell = val;
+                else if (key == "Type") currentTool.type = val;
+                else if (key == "Hotkey") currentTool.hotkey = val;
+            }
+        }
+    }
+    if (inItem) g_tools.push_back(currentTool);
+}
+
+void SaveConfig() {
+    fs::path configPath = GetConfigPath();
+    fs::create_directories(configPath.parent_path());
+    std::ofstream ofs(configPath);
+    if (!ofs.is_open()) return;
+    
+    ofs << "# RunIt Config File\n";
+    ofs << "# Format: [ItemX]\nName=...\nPath=...\nArgs=...\nShell=...\nType=...\nHotkey=...\n\n";
+    for (size_t i = 0; i < g_tools.size(); i++) {
+        ofs << "[Item" << (i + 1) << "]\n";
+        ofs << "Name=" << g_tools[i].name << "\n";
+        ofs << "Path=" << g_tools[i].path << "\n";
+        ofs << "Args=" << g_tools[i].args << "\n";
+        ofs << "Shell=" << g_tools[i].shell << "\n";
+        ofs << "Type=" << g_tools[i].type << "\n";
+        ofs << "Hotkey=" << g_tools[i].hotkey << "\n\n";
+    }
+}
+
+// ================== Tool Launch Logic ==================
+void LaunchToolByIndex(int index) {
+    if (index > 0 && index <= (int)g_tools.size()) {
+        int toolIdx = index - 1;
+        const auto& tool = g_tools[toolIdx];
+        if (!tool.path.empty()) {
+            fs::path currentDir = fs::current_path();
+            std::string dirStr = currentDir.string();
+            
+            std::string cmdPath = tool.path;
+            std::string argsStr = tool.args;
+            
+            size_t pos = argsStr.find("{current_dir}");
+            if (pos != std::string::npos) {
+                argsStr.replace(pos, 13, "\"" + dirStr + "\"");
+            }
+            
+            chdir(dirStr.c_str());
+            
+            std::vector<std::string> argStrs;
+            argStrs.push_back(cmdPath);
+            for (const auto& a : SplitArgs(argsStr)) {
+                argStrs.push_back(a);
+            }
+            
+            if (!tool.shell.empty()) {
+                std::string termName = fs::path(cmdPath).filename().string();
+                if (termName == "gnome-terminal" || termName == "xfce4-terminal" || termName == "mate-terminal") {
+                    argStrs.push_back("--");
+                    argStrs.push_back(tool.shell);
+                } else if (termName == "konsole" || termName == "xterm" || termName == "alacritty" || termName == "kitty") {
+                    argStrs.push_back("-e");
+                    argStrs.push_back(tool.shell);
+                }
+            }
+            
+            std::vector<char*> argv;
+            for (auto& s : argStrs) argv.push_back(&s[0]);
+            argv.push_back(nullptr);
+            
+            std::string type = tool.type;
+            // Backward compatibility: infer type if not set
+            if (type.empty()) {
+                std::string n = tool.name;
+                std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                if (n.find("bash") != std::string::npos || n.find("zsh") != std::string::npos || n.find("fish") != std::string::npos) {
+                    type = "SHELL";
+                } else if (n.find("tmux") != std::string::npos || n.find("zellij") != std::string::npos) {
+                    type = "MULTIPLEXER";
+                } else {
+                    type = "GUI";
+                }
+            }
+            
+            if (type == "SHELL" || type == "MULTIPLEXER" || type == "TUI") {
+                // Enter alternate screen buffer. This saves the current screen and cursor position,
+                // providing a clean empty screen for the new shell. When the shell exits,
+                // we will revert to the main buffer, perfectly restoring the original shell's output.
+                std::cout << "\033[?1049h" << std::flush;
+                
+                pid_t pid = fork();
+                if (pid == 0) {
+                    // Child process
+                    execvp(cmdPath.c_str(), argv.data());
+                    // If exec fails
+                    std::cerr << "Failed to exec " << cmdPath << ": " << strerror(errno) << std::endl;
+                    exit(1);
+                } else if (pid > 0) {
+                    // Parent process
+                    int status;
+                    // Wait for the child shell to exit
+                    waitpid(pid, &status, 0);
+                    // Exit alternate screen buffer (restores original screen)
+                    std::cout << "\033[?1049l" << std::flush;
+                } else {
+                    std::cerr << "Failed to fork: " << strerror(errno) << std::endl;
+                    std::cout << "\033[?1049l" << std::flush;
+                }
+            } else {
+                // GUI apps can be spawned asynchronously
+                pid_t pid;
+                int spawnResult;
+                if (cmdPath.find('/') != std::string::npos) {
+                    spawnResult = posix_spawn(&pid, cmdPath.c_str(), NULL, NULL, argv.data(), environ);
+                } else {
+                    spawnResult = posix_spawnp(&pid, cmdPath.c_str(), NULL, NULL, argv.data(), environ);
+                }
+                if (spawnResult != 0) {
+                    std::cerr << "Failed to launch " << cmdPath << ": " << strerror(spawnResult) << std::endl;
+                }
+            }
+        }
+    }
+}
+
+// ================== TUI Core Logic ==================
+struct termios g_oldTermios;
+
+void enableRawMode() {
+    tcgetattr(STDIN_FILENO, &g_oldTermios);
+    termios newTermios = g_oldTermios;
+    newTermios.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newTermios);
+}
+
+void disableRawMode() {
+    tcsetattr(STDIN_FILENO, TCSANOW, &g_oldTermios);
+}
+
+int getKey() {
+    char c;
+    if (read(STDIN_FILENO, &c, 1) <= 0) return -1;
+    if (c == '\033') {
+        char seq[2];
+        if (read(STDIN_FILENO, &seq[0], 1) <= 0) return '\033';
+        if (read(STDIN_FILENO, &seq[1], 1) <= 0) return '\033';
+        if (seq[0] == '[') {
+            if (seq[1] == 'A') return 1;
+            if (seq[1] == 'B') return 2;
+        }
+        return '\033';
+    }
+    return c;
+}
+
+// TUI rendering: in-place re-render, preserves scrollback history
+// Uses "# " prefix for non-selectable category separators
+int showMenu(const std::string& title, const std::vector<std::string>& options) {
+    int selected = 1;
+    int numSelectable = 0;
+    for(auto& opt : options) if (opt.rfind("# ", 0) != 0) numSelectable++;
+    
+    enableRawMode();
+    int printedLines = 0;
+    
+    auto render = [&]() {
+        if (printedLines > 0) {
+            std::cout << "\033[" << printedLines << "A";
+            for(int i=0; i<printedLines; i++) std::cout << "\r\033[K\n";
+            std::cout << "\033[" << printedLines << "A";
+        }
+        printedLines = 0;
+        
+        std::string titleHint = (numSelectable <= 9) ? " (Up/Down, 1-9, Enter, ESC to cancel)" : " (Up/Down, Enter, ESC to cancel)";
+        std::cout << title << titleHint << "\n"; printedLines++;
+        std::cout << "------------------------------------------------\n"; printedLines++;
+        
+        int idx = 0;
+        for (const auto& opt : options) {
+            if (opt.rfind("# ", 0) == 0) {
+                std::cout << opt.substr(2) << "\n";
+            } else {
+                idx++;
+                std::string label = std::to_string(idx) + ". " + opt;
+                if (idx == selected) {
+                    std::cout << "\033[7m> " << label << "\033[0m";
+                } else {
+                    std::cout << "  " << label;
+                }
+                std::cout << "\n";
+            }
+            printedLines++;
+        }
+        std::cout << "------------------------------------------------\n"; printedLines++;
+        std::cout.flush();
+    };
+    
+    render();
+    while (true) {
+        int key = getKey();
+        if (key == 2) { selected++; if (selected > numSelectable) selected = 1; render(); }
+        else if (key == 1) { selected--; if (selected < 1) selected = numSelectable; render(); }
+        else if (key == '\n' || key == '\r') { disableRawMode(); return selected; }
+        else if (key == '\033') { disableRawMode(); return -1; }
+        else if (numSelectable <= 9 && key >= '1' && key <= '9') {
+            int num = key - '0';
+            if (num <= numSelectable) {
+                disableRawMode();
+                return num;
+            }
+        }
+    }
+}
+
+std::string promptString(const std::string& prompt, const std::string& def) {
+    std::string input = def;
+    int printedLines = 0;
+    enableRawMode();
+    
+    auto render = [&]() {
+        if (printedLines > 0) {
+            std::cout << "\033[" << printedLines << "A";
+            for(int i=0; i<printedLines; i++) std::cout << "\r\033[K\n";
+            std::cout << "\033[" << printedLines << "A";
+        }
+        printedLines = 0;
+        std::cout << prompt << " (ESC to keep default)\n"; printedLines++;
+        std::cout << "------------------------------------------------\n"; printedLines++;
+        std::cout << ">> " << input << "\n"; printedLines++;
+        std::cout << "------------------------------------------------\n"; printedLines++;
+        std::cout.flush();
+    };
+    
+    render();
+    while (true) {
+        int key = getKey();
+        if (key == '\n' || key == '\r') { disableRawMode(); return input; }
+        else if (key == 127 || key == '\b') { if (!input.empty()) input.pop_back(); render(); }
+        else if (key == '\033') { disableRawMode(); return def; }
+        else if (key >= 32 && key <= 126) { input += (char)key; render(); }
+    }
+}
+
+// ================== TUI Settings Logic ==================
+void AddToolTUI() {
+    // Fixed to exactly 9 selectable items to support 1-9 shortcuts!
+    std::vector<std::string> templates = {
+        "# ----------------- Terminals -----------------",
+        "GNOME Terminal (Linux GUI)",
+        "Konsole (KDE Linux GUI)",
+        "Mac Terminal (macOS GUI)",
+        "iTerm2 (macOS GUI)",
+        "# ------------------ Shells ------------------",
+        "Zsh Shell (Interactive Shell)",
+        "Bash Shell (Interactive Shell)",
+        "Fish Shell (Interactive Shell)",
+        "# --------------- Multiplexers ---------------",
+        "Tmux (TUI Multiplexer - SSH OK!)",
+        "Zellij (TUI Multiplexer - SSH OK!)"
+    };
+    int choice = showMenu("Select Tool Template", templates);
+    if (choice == -1) return;
+
+    std::string name = "", path = "", args = "", shell = "", hotkey = "";
+    std::string type = "GUI";
+    
+    if (choice == 1) { name = "GNOME Terminal"; path = FindExecutablePathPosix("gnome-terminal"); args = "--working-directory=\"{current_dir}\""; type = "GUI"; }
+    else if (choice == 2) { name = "Konsole"; path = FindExecutablePathPosix("konsole"); args = "--workdir \"{current_dir}\""; type = "GUI"; }
+    else if (choice == 3) { name = "Mac Terminal"; path = "/System/Applications/Terminal.app/Contents/MacOS/Terminal"; args = "\"{current_dir}\""; type = "GUI"; }
+    else if (choice == 4) { name = "iTerm2"; path = "/Applications/iTerm.app/Contents/MacOS/iTerm2"; args = "\"{current_dir}\""; type = "GUI"; }
+    else if (choice == 5) { name = "Zsh"; path = FindExecutablePathPosix("zsh"); args = ""; type = "SHELL"; }
+    else if (choice == 6) { name = "Bash"; path = FindExecutablePathPosix("bash"); args = ""; type = "SHELL"; }
+    else if (choice == 7) { name = "Fish"; path = FindExecutablePathPosix("fish"); args = ""; type = "SHELL"; }
+    else if (choice == 8) { name = "Tmux"; path = FindExecutablePathPosix("tmux"); args = "new-session -s work"; type = "MULTIPLEXER"; }
+    else if (choice == 9) { name = "Zellij"; path = FindExecutablePathPosix("zellij"); args = ""; type = "MULTIPLEXER"; }
+
+    name = promptString("Confirm/Enter Name", name);
+    if (name.empty()) return;
+    path = promptString("Confirm/Enter Path", path);
+    if (path.empty()) return;
+    args = promptString("Confirm/Enter Args", args);
+    shell = promptString("Confirm/Enter Inner Shell", shell);
+    type = promptString("Confirm/Enter Type (GUI/SHELL/MULTIPLEXER)", type);
+    hotkey = promptString("Confirm/Enter Hotkey", hotkey);
+
+    g_tools.push_back({name, path, args, shell, hotkey, type});
+    SaveConfig();
+}
+
+void ModifyToolTUI() {
+    if (g_tools.empty()) {
+        showMenu("Notice", {"No tools to modify. Press Enter..."});
+        return;
+    }
+    std::vector<std::string> names;
+    for (const auto& t : g_tools) names.push_back(t.name + "  [" + t.path + "]");
+
+    int choice = showMenu("Select Tool to Modify", names);
+    if (choice == -1) return;
+
+    int idx = choice - 1;
+    std::string name = promptString("Modify Name", g_tools[idx].name);
+    std::string path = promptString("Modify Path", g_tools[idx].path);
+    std::string args = promptString("Modify Args", g_tools[idx].args);
+    std::string shell = promptString("Modify Inner Shell", g_tools[idx].shell);
+    std::string type = promptString("Modify Type (GUI/SHELL/MULTIPLEXER)", g_tools[idx].type.empty() ? "GUI" : g_tools[idx].type);
+    std::string hotkey = promptString("Modify Hotkey", g_tools[idx].hotkey);
+
+    g_tools[idx] = {name, path, args, shell, hotkey, type};
+    SaveConfig();
+}
+
+void RunTuiConfig() {
+    while (true) {
+        int action = showMenu("Setting Menu", {"Add Tool", "Modify Tool", "Back"});
+        if (action == 1) AddToolTUI();
+        else if (action == 2) ModifyToolTUI();
+        else break;
+    }
+}
+
+// ================== Main Menu & Entry Point ==================
+int main(int argc, char* argv[]) {
+    g_exeDir = GetExeDir();
+    LoadConfig();
+    
+    int autoSelect = -1;
+    if (argc > 1) {
+        std::string arg = argv[1];
+        bool isNumeric = !arg.empty();
+        for (char c : arg) {
+            if (c < '0' || c > '9') { isNumeric = false; break; }
+        }
+        if (arg == "config" || arg == "/config" || arg == "-config" || arg == "setting" || arg == "/setting") {
+            RunTuiConfig();
+            return 0;
+        } else if (isNumeric) {
+            autoSelect = std::stoi(arg);
+        }
+    }
+    
+    bool isSSH = IsSSHSession();
+
+    while (true) {
+        std::vector<int> terminalTools, shellTools;
+        
+        for (size_t i = 0; i < g_tools.size(); i++) {
+            if (!g_tools[i].path.empty()) {
+                std::string type = g_tools[i].type;
+                // Infer type for backward compatibility
+                if (type.empty()) {
+                    std::string n = g_tools[i].name;
+                    std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                    if (n.find("bash") != std::string::npos || n.find("zsh") != std::string::npos || n.find("fish") != std::string::npos) {
+                        type = "SHELL";
+                    } else if (n.find("tmux") != std::string::npos || n.find("zellij") != std::string::npos) {
+                        type = "MULTIPLEXER";
+                    } else {
+                        type = "GUI";
+                    }
+                }
+                
+                // Environment filtering: Hide GUI terminals in ANY SSH session
+                if (isSSH && type == "GUI") continue;
+                
+                // Grouping: Shells and Multiplexers go to the available list
+                if (type == "SHELL" || type == "MULTIPLEXER" || type == "TUI") {
+                    shellTools.push_back(i);
+                } else {
+                    terminalTools.push_back(i);
+                }
+            }
+        }
+        
+        // Build validIndices with separator markers
+        std::vector<int> validIndices;
+        if (!terminalTools.empty()) {
+            validIndices.push_back(-1); // Terminal separator
+            for(int i : terminalTools) validIndices.push_back(i);
+        }
+        if (!shellTools.empty()) {
+            validIndices.push_back(-2); // Shell separator
+            for(int i : shellTools) validIndices.push_back(i);
+        }
+        
+        int numSelectable = terminalTools.size() + shellTools.size();
+        
+        // Handle command line autoSelect
+        if (autoSelect > 0) {
+            if (autoSelect <= numSelectable) {
+                int actualIdx = -1;
+                int count = 0;
+                for(int idx : validIndices) {
+                    if (idx >= 0) {
+                        count++;
+                        if (count == autoSelect) {
+                            actualIdx = idx;
+                            break;
+                        }
+                    }
+                }
+                if (actualIdx != -1) {
+                    LaunchToolByIndex(actualIdx + 1);
+                    return 0;
+                }
+            } else if (autoSelect == numSelectable + 1) {
+                RunTuiConfig();
+                return 0;
+            }
+            autoSelect = -1; // Invalid, fallthrough to interactive
+        }
+        
+        int selected = 1;
+        int printedLines = 0;
+        
+        auto renderMenu = [&]() {
+            if (printedLines > 0) {
+                std::cout << "\033[" << printedLines << "A";
+                for(int i=0; i<printedLines; i++) std::cout << "\r\033[K\n";
+                std::cout << "\033[" << printedLines << "A";
+            }
+            printedLines = 0;
+            
+            std::string titleHint = (numSelectable + 1 <= 9) ? " (Up/Down, 1-9, Enter, ESC to cancel)" : " (Up/Down, Enter, ESC to cancel)";
+            std::cout << "RunIt - Select Environment" << titleHint << ":\n"; printedLines++;
+            std::cout << "------------------------------------------------\n"; printedLines++;
+            
+            int idx = 0;
+            for (size_t i = 0; i < validIndices.size(); i++) {
+                int toolIdx = validIndices[i];
+                if (toolIdx == -1) {
+                    std::cout << "------------------- Terminals ------------------\n";
+                } else if (toolIdx == -2) {
+                    std::cout << "------------------- Shells ---------------------\n";
+                } else {
+                    idx++;
+                    std::string label = std::to_string(idx) + ". " + g_tools[toolIdx].name;
+                    if (!g_tools[toolIdx].shell.empty()) label += " [Shell: " + g_tools[toolIdx].shell + "]";
+                    else if (!g_tools[toolIdx].hotkey.empty()) label += " (" + g_tools[toolIdx].hotkey + ")";
+                    
+                    if (idx == selected) std::cout << "\033[7m> " << label << "\033[0m";
+                    else std::cout << "  " << label;
+                    std::cout << "\n";
+                }
+                printedLines++;
+            }
+            
+            // System separator
+            std::cout << "------------------- System ---------------------\n"; printedLines++;
+            
+            int settingIdx = numSelectable + 1;
+            std::string settingLabel = std::to_string(settingIdx) + ". Setting";
+            if (settingIdx == selected) std::cout << "\033[7m> " << settingLabel << "\033[0m";
+            else std::cout << "  " << settingLabel;
+            std::cout << "\n"; printedLines++;
+            
+            std::cout << "------------------------------------------------\n"; printedLines++;
+            std::cout.flush();
+        };
+        
+        enableRawMode();
+        renderMenu();
+        int finalChoice = -1;
+        while (true) {
+            int key = getKey();
+            if (key == 2) { selected++; if (selected > numSelectable + 1) selected = 1; renderMenu(); }
+            else if (key == 1) { selected--; if (selected < 1) selected = numSelectable + 1; renderMenu(); }
+            else if (key == '\n' || key == '\r') { finalChoice = selected; break; }
+            else if (key == '\033') { finalChoice = -1; break; }
+            else if ((numSelectable + 1) <= 9 && key >= '1' && key <= '9') {
+                int num = key - '0';
+                if (num <= numSelectable + 1) {
+                    finalChoice = num;
+                    break;
+                }
+            }
+        }
+        disableRawMode();
+        
+        // Clear the TUI menu lines before taking action, to seamlessly restore the underlying terminal state.
+        if (printedLines > 0) {
+            std::cout << "\033[" << printedLines << "A";
+            for(int i=0; i<printedLines; i++) std::cout << "\r\033[K\n";
+            std::cout << "\033[" << printedLines << "A";
+            std::cout.flush();
+            printedLines = 0;
+        }
+        
+        if (finalChoice == -1) break;
+        
+        if (finalChoice == numSelectable + 1) {
+            RunTuiConfig();
+            // Loop continues, will renderMenu() again
+        } else {
+            int actualIdx = -1;
+            int count = 0;
+            for(int idx : validIndices) {
+                if (idx >= 0) {
+                    count++;
+                    if (count == finalChoice) {
+                        actualIdx = idx;
+                        break;
+                    }
+                }
+            }
+            if (actualIdx != -1) {
+                LaunchToolByIndex(actualIdx + 1);
+                break;
+            }
+        }
+    }
+    
+    return 0;
+}
+
+
+#endif
