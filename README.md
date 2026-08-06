@@ -110,7 +110,7 @@ If you prefer to compile RunIn yourself, follow these steps:
    ```bash
    sudo apt update && sudo apt install build-essential cmake
    mkdir build && cd build
-   cmake ..
+   cmake -DCMAKE_BUILD_TYPE=Release ..
    make
    sudo cp RunIn /usr/local/bin/
    ```
@@ -119,7 +119,7 @@ If you prefer to compile RunIn yourself, follow these steps:
    ```bash
    sudo dnf install gcc gcc-c++ cmake
    mkdir build && cd build
-   cmake ..
+   cmake -DCMAKE_BUILD_TYPE=Release ..
    make
    sudo cp RunIn /usr/local/bin/
    ```

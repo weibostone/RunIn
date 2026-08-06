@@ -1369,7 +1369,13 @@ void LaunchToolByIndex(int index) {
                 argsStr.replace(pos, 13, "\"" + dirStr + "\"");
             }
             
-            chdir(dirStr.c_str());
+            // Change current working directory and check for errors
+            if (chdir(dirStr.c_str()) != 0) {
+                // Print error message in red if directory change fails
+                std::cerr << "\033[1;31mRunIt Error: Failed to change directory to '" << dirStr 
+                          << "'. " << strerror(errno) << "\033[0m\n";
+                return; // Abort launching the tool
+            }
             
             std::vector<std::string> argStrs;
             argStrs.push_back(cmdPath);

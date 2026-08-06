@@ -103,7 +103,7 @@ Windows文件资源管理器的地址栏中输入`ri`或双击`ri.exe`（或绑�
    ```bash
    sudo apt update && sudo apt install build-essential cmake
    mkdir build && cd build
-   cmake ..
+   cmake -DCMAKE_BUILD_TYPE=Release ..
    make
    sudo cp RunIn /usr/local/bin/
    ```
@@ -112,7 +112,7 @@ Windows文件资源管理器的地址栏中输入`ri`或双击`ri.exe`（或绑�
    ```bash
    sudo dnf install gcc gcc-c++ cmake
    mkdir build && cd build
-   cmake ..
+   cmake -DCMAKE_BUILD_TYPE=Release ..
    make
    sudo cp RunIn /usr/local/bin/
    ```

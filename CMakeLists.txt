@@ -7,6 +7,11 @@ if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
+if(UNIX AND NOT APPLE)
+    message(STATUS "Applying static linking for Linux")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libstdc++ -static-libgcc")
+endif()
+
 if(WIN32)
     add_compile_definitions(UNICODE _UNICODE)
     add_compile_options(/utf-8)
