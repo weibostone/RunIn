@@ -1142,6 +1142,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 #include <termios.h>
 #include <cstdio>
 #include <cerrno>
+#include <ctime>
+#include <csignal>
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -1317,6 +1319,40 @@ void SaveConfig() {
 }
 
 // ================== Tool Launch Logic ==================
+
+// ================== TUI Core Logic ==================
+struct termios g_oldTermios;
+
+// Global flag to track if we are currently in the alternate screen buffer.
+// Used by the signal handler to ensure safe exit.
+bool g_inAltScreen = false;
+
+// Signal handler to gracefully exit on interruptions (e.g., Ctrl+C, termination).
+void handle_signal(int sig) {
+    // If we are in the alternate screen, switch back to the main screen buffer.
+    if (g_inAltScreen) {
+        std::cout << "\033[?1049l" << std::flush;
+    }
+    
+    // Restore the original terminal attributes (disable raw mode).
+    tcsetattr(STDIN_FILENO, TCSANOW, &g_oldTermios);
+    
+    // Use _exit() for immediate termination to ensure async-signal-safety.
+    // Avoids calling non-async-signal-safe functions (like destructors or std::cout internals) inside the handler.
+    _exit(sig); 
+}
+
+void enableRawMode() {
+    tcgetattr(STDIN_FILENO, &g_oldTermios);
+    termios newTermios = g_oldTermios;
+    newTermios.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newTermios);
+}
+
+void disableRawMode() {
+    tcsetattr(STDIN_FILENO, TCSANOW, &g_oldTermios);
+}
+
 void LaunchToolByIndex(int index) {
     if (index > 0 && index <= (int)g_tools.size()) {
         int toolIdx = index - 1;
@@ -1371,10 +1407,30 @@ void LaunchToolByIndex(int index) {
             }
             
             if (type == "SHELL" || type == "MULTIPLEXER" || type == "TUI") {
+
+                // Register signal handlers in the parent process to prevent crashes
+                std::signal(SIGINT, handle_signal);// Ctrl+C
+                std::signal(SIGTERM, handle_signal);// kill command
+                std::signal(SIGHUP, handle_signal);// kill command
                 // Enter alternate screen buffer. This saves the current screen and cursor position,
                 // providing a clean empty screen for the new shell. When the shell exits,
                 // we will revert to the main buffer, perfectly restoring the original shell's output.
-                std::cout << "\033[?1049h" << std::flush;
+                // position cursor at top-left and clear screen
+                std::cout << "\033[?1049h\033[H\033[2J" << std::flush;
+                
+                // Get current system time for the welcome prompt
+                std::time_t now = std::time(nullptr);
+                char timeBuf[64];
+                std::strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+                
+                // Print welcome message with tool name, time, and directory
+                fs::path currentDir = fs::current_path();
+                std::cout << "\033[1;36m" 
+                          << "RunIt: " << tool.name << " started at " << currentDir.string() 
+                          << " on " << timeBuf << ". Type 'exit' to return."
+                          << "\033[0m\n\n" << std::flush;
+                
+                g_inAltScreen = true;
                 
                 pid_t pid = fork();
                 if (pid == 0) {
@@ -1409,20 +1465,6 @@ void LaunchToolByIndex(int index) {
             }
         }
     }
-}
-
-// ================== TUI Core Logic ==================
-struct termios g_oldTermios;
-
-void enableRawMode() {
-    tcgetattr(STDIN_FILENO, &g_oldTermios);
-    termios newTermios = g_oldTermios;
-    newTermios.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newTermios);
-}
-
-void disableRawMode() {
-    tcsetattr(STDIN_FILENO, TCSANOW, &g_oldTermios);
 }
 
 int getKey() {
